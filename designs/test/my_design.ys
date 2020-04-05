@@ -1,0 +1,24 @@
+
+read_verilog my_design.v
+hierarchy -check -top my_design
+
+
+write_json my_design_0.json
+#show -pause
+
+proc; opt;
+write_json my_design_1.json
+#show -pause
+
+memory; opt;
+write_json my_design_2.json
+#show -pause
+
+
+techmap; opt
+write_json my_design_3.json
+# show -pause
+# show
+
+# write_blif my_design.blif
+write_json my_design.json
