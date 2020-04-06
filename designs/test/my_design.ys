@@ -3,22 +3,19 @@ read_verilog my_design.v
 hierarchy -check -top my_design
 
 
-write_json my_design_0.json
+write_json my_design_start.json
 # show -pause
 
 proc; opt;
-write_json my_design_1.json
-#show -pause
+write_json my_design_proc.json
+# show -pause
 
 memory; opt;
-write_json my_design_2.json
-#show -pause
-
-
-techmap; opt;
-write_json my_design_3.json
+write_json my_design_memory.json
 # show -pause
-show
 
-# write_blif my_design.blif
+# For large designs, the show command never completes.
+# TODO: Look into selecting a part of the design instead of the entire thing.
+techmap; opt;
 write_json my_design.json
+# show -pause
