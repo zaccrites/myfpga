@@ -3,7 +3,7 @@ module my_design (
     input i_Clock,
     input i_Reset,
     input [15:0] i_Amount,
-    output [15:0] o_Output,
+    output [15:0] o_Output
 );
 
 
@@ -18,5 +18,3 @@ end
 
 
 endmodule
-
-
