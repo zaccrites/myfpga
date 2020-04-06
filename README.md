@@ -1,7 +1,7 @@
 
 # myfpga
 
-A DIY FPGA architecture
+A DIY FPGA Architecture
 
 The FPGA is implemented in SystemVerilog and simulated using a Verilator
 model linked against a C++ launcher.
