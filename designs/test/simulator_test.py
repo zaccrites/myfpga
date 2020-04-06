@@ -6,6 +6,11 @@ import functools
 
 
 
+# Instead of function "cells", just convert all Yosys primitives into
+# LUTs in a first pass. The second pass converts LUTs and flip flops into
+# logic cells.
+
+
 
 class Circuit:
 
@@ -59,6 +64,22 @@ class Circuit:
                     y_id=get_bit_id(raw_cell['connections']['Y'][0]),
                 ))
 
+            elif raw_cell['type'] == '$_AND_':
+                assert raw_cell['port_directions'] == {'A': 'input', 'B': 'input', 'Y': 'output'}
+                self.cells.append(functools.partialmethod(self._and_cell,
+                    a_id=get_bit_id(raw_cell['connections']['A'][0]),
+                    b_id=get_bit_id(raw_cell['connections']['B'][0]),
+                    y_id=get_bit_id(raw_cell['connections']['Y'][0]),
+                ))
+
+            elif raw_cell['type'] == '$_OR_':
+                assert raw_cell['port_directions'] == {'A': 'input', 'B': 'input', 'Y': 'output'}
+                self.cells.append(functools.partialmethod(self._or_cell,
+                    a_id=get_bit_id(raw_cell['connections']['A'][0]),
+                    b_id=get_bit_id(raw_cell['connections']['B'][0]),
+                    y_id=get_bit_id(raw_cell['connections']['Y'][0]),
+                ))
+
             elif raw_cell['type'] == '$_XOR_':
                 assert raw_cell['port_directions'] == {'A': 'input', 'B': 'input', 'Y': 'output'}
                 self.cells.append(functools.partialmethod(self._xor_cell,
@@ -67,11 +88,10 @@ class Circuit:
                     y_id=get_bit_id(raw_cell['connections']['Y'][0]),
                 ))
 
-            elif raw_cell['type'] == '$_AND_':
-                assert raw_cell['port_directions'] == {'A': 'input', 'B': 'input', 'Y': 'output'}
-                self.cells.append(functools.partialmethod(self._and_cell,
+            elif raw_cell['type'] == '$_NOT_':
+                assert raw_cell['port_directions'] == {'A': 'input', 'Y': 'output'}
+                self.cells.append(functools.partialmethod(self._not_cell,
                     a_id=get_bit_id(raw_cell['connections']['A'][0]),
-                    b_id=get_bit_id(raw_cell['connections']['B'][0]),
                     y_id=get_bit_id(raw_cell['connections']['Y'][0]),
                 ))
 
@@ -337,33 +357,38 @@ def main():
 
     circuit = Circuit(raw_design)
 
-    circuit.set_input('i_Enable', 1)
-    for i in range(32):
-        circuit.set_input('i_Reset', 1 if i == 4 else 0)
+    for i in range(16):
+        circuit.set_input('i_Address3', i & 8)
+        circuit.set_input('i_Address2', i & 4)
+        circuit.set_input('i_Address1', i & 2)
+        circuit.set_input('i_Address0', i & 1)
 
-        output_bits = [circuit.get_output(f'o_Output{i}') for i in range(4)]
-        print(' '.join(f'{x:d}' for x in reversed(output_bits)))
+        circuit.set_input('i_DataIn3', i & 8)
+        circuit.set_input('i_DataIn2', i & 4)
+        circuit.set_input('i_DataIn1', i & 2)
+        circuit.set_input('i_DataIn0', i & 1)
+        circuit.set_input('i_WriteEnable', 1)
+
         circuit.tick()
-
-    # circuit.set_input('i_DataIn', 1)
-    # for i in range(10):
-    #     output_bits = [circuit.get_output(f'o_Output{i}') for i in range(4)]
-    #     print(' '.join(f'{x:d}' for x in reversed(output_bits)))
-    #     circuit.tick()
-
-    #     if i > 3:
-    #         circuit.set_input('i_DataIn', 0)
+        output_bits = [circuit.get_output(f'o_Output{i}') for i in range(4)]
+        print(i, ':', ' '.join(f'{x:d}' for x in reversed(output_bits)))
 
 
+    for i in range(16):
+        circuit.set_input('i_Address3', i & 8)
+        circuit.set_input('i_Address2', i & 4)
+        circuit.set_input('i_Address1', i & 2)
+        circuit.set_input('i_Address0', i & 1)
 
+        # circuit.set_input('i_DataIn3', i & 8)
+        # circuit.set_input('i_DataIn2', i & 4)
+        # circuit.set_input('i_DataIn1', i & 2)
+        # circuit.set_input('i_DataIn0', i & 1)
+        circuit.set_input('i_WriteEnable', 0)
 
-
-
-
-
-
-
-
+        circuit.tick()
+        output_bits = [circuit.get_output(f'o_Output{i}') for i in range(4)]
+        print(i, ':', ' '.join(f'{x:d}' for x in reversed(output_bits)))
 
 
 if __name__ == '__main__':

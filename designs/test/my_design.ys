@@ -4,7 +4,7 @@ hierarchy -check -top my_design
 
 
 write_json my_design_0.json
-#show -pause
+# show -pause
 
 proc; opt;
 write_json my_design_1.json
@@ -15,10 +15,10 @@ write_json my_design_2.json
 #show -pause
 
 
-techmap; opt
+techmap; opt;
 write_json my_design_3.json
 # show -pause
-# show
+show
 
 # write_blif my_design.blif
 write_json my_design.json
