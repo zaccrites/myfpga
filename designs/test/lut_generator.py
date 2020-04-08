@@ -282,86 +282,8 @@ class Constant(CombinationalCircuit):
 
 
 
-# import subprocess
-# def run_minisat():
-
-#     script_lines = [
-#         'p cnf 3 2',
-
-#     ]
-
-#     clauses = [
-#         (1, 2, 0),
-#         (-2, 3, 0),
-#     ]
-
-#     solutions = []
-
-#     while True:
-#         # with open('minisat2.txt', 'w') as f:
-#         #     f.write('\n'.join(script_lines))
-
-#         # script_lines = [f'p cnf {len(clauses[0])} {len(clauses)}']
-#         script_lines = []
-#         for clause in clauses:
-#             script_lines.append(' '.join(str(term) for term in clause))
-#         script = '\n'.join(script_lines).encode('utf-8')
-
-#         cmd = ['minisat', 'minisat2.txt', 'minisat2_output.txt']
-#         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-#         p.communicate(input=script)
-
-#         assert p.returncode in {10, 20}
-#         is_satisfiable = p.returncode == 10
-
-#         if not is_satisfiable:
-#             return solutions
-
-#         with open('minisat2_output.txt') as f:
-#             contents = f.read()
-#             try:
-#                 solution = tuple(int(term) for term in contents.splitlines()[1].split())
-#             except IndexError:
-#                 # import pdb; pdb.set_trace();  # TODO: remove me
-#                 raise
-
-#         solutions.append(solution)
-#         clauses.append(tuple(-term for term in solution))
-
-#         if solution in solutions:
-#             import pdb; pdb.set_trace();  # TODO: remove me
-#             pass
-
-
-
-
 
 def main():
-
-    # from satispy import Variable, Cnf
-    # from satispy.solver import Minisat
-
-    # v1 = Variable('v1')
-    # v2 = Variable('v2')
-    # v3 = Variable('v3')
-
-    # exp = v1 & v2 | v3
-
-    # solver = Minisat()
-
-    # solution = solver.solve(exp)
-
-    # if solution.success:
-    #     print( "Found a solution:")
-    #     print( v1, solution[v1])
-    #     print( v2, solution[v2])
-    #     print( v3, solution[v3])
-    # else:
-    #     print( "The expression cannot be satisfied")
-
-    # return
-
-
     parser = argparse.ArgumentParser()
     parser.add_argument('design_file')
     args = parser.parse_args()
