@@ -242,27 +242,28 @@ def run(args):
 
         print(output_node_name, '->', ', '.join(nodelist), '\n')
 
-        # Push nodes onto a stack to evaluate the function for all
-        # possible inputs (2**number_of_inputs))
-        # to build a truth table.
+        # Use Tseytin transformation to convert the design into CNF and
+        # feed to Minisat to solve for the LUT entries. In that case it
+        # may be better to use the normal techmap logic gates instead of
+        # the AIG ones (even if NAND is allowed) because any logic gates
+        # can be converted into CNF, not just AND and NOT gates.
+        # The MUX CNF sub expression isn't given on Wikipedia,
+        # but I can derive it and consider it as another logic gate type.
+        # https://en.wikipedia.org/wiki/Tseytin_transformation
+        #
+        # I still need to figure out how constants will affect the derived
+        # CNF expressions. For now I'm assuming it will just remove variables
+        # in clauses related to the affected gates.
+        #
         # TODO
-        #
-        # For 4-input LUTs this is fine. I am a little concerned that for
-        # e.g. checking for a specific 32-bit constant that this will get
-        # unwieldy. 4 variables is 16 checks, but 32 variables is 4 billion.
-        # I may still have to use Minisat for this.
-        #
-        #
-        import itertools
-        variables = len(logic_input_nodes)
-        for inputs in itertools.product([True, False], repeat=variables):
-            assert len(inputs) == variables
-
 
         # Reduce truth table to LUT width, creating new LUTs as needed.
         # 4-input LUTs seems like a good idea
         # https://electronics.stackexchange.com/a/169535
         # TODO
+
+        # Don't bother trying to simulate anything until the logic cells
+        # are generated.
 
         # Place and route
         # https://www.intel.com/content/dam/www/programmable/us/en/pdfs/literature/wp/wp-01003.pdf

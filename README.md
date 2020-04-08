@@ -11,3 +11,12 @@ and may be simulated themselves using Verilator or using the simulator
 built into the myfpga toolchain.
 The toolchain will perform place-and-route and generate a bitstream,
 which the myfpga simulation C++ launcher will load into the simulated FPGA.
+
+
+## Development
+
+TODO
+
+```
+apt install build-essential cmake ninja verilator yosys minisat
+```
