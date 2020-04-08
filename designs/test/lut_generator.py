@@ -135,24 +135,6 @@ class Design:
 
 
 
-# def parse_design(raw_design):
-    # modules = list(raw_design['modules'].values())
-    # assert len(modules) == 1
-
-    # ports = modules[0]['ports']
-    # cells = modules[0]['cells']
-
-
-    # graph_edges = []
-
-
-
-
-
-
-    # import pdb; pdb.set_trace();  # TODO: remove me
-    # pass
-
 
 
 class Circuit:
@@ -179,12 +161,34 @@ def run(args):
 
     graph = design.build_combinational_logic_dependency_graph()
 
-    # import pdb; pdb.set_trace();  # TODO: remove me
-    pass
 
+    # TODO: Handle constants in the logic as well. Currently an output
+    # fed by a constant doesn't appear in the output.
+    #
+    # A constant should appear as a True or False node in the
+    # function evaluation stack.
+
+
+    # TODO: This strategy may not produce efficient results if a single
+    # shared signal is used by multiple outputs. If computing that shared
+    # signal is expensive to compute and not fed into a flip flop,
+    # the logic needed to compute it will be duplicated for each output
+    # it feeds.
+
+    # I think the solution is to break the graph at any place where
+    # the signal is used by a FF input OR a module output, because if
+    # e.g. a signal marked as an output is used as an input to another
+    # signal, it will have in_degree != 0. If we consider it a
+    # termination and a new starting point for the logic that follows
+    # we can be certain that the correct logic function will be evaluated
+    # for the output, and we can also be certain that the following logic
+    # will not have to duplicate an expensive computation.
 
 
     # TODO: Move this logic into the Design class
+
+    # Find the transitive closure of the graph so that later we can determine
+    # which input nodes connect to a given output node.
     transitive_closure = nx.transitive_closure(graph)
 
     # First, find nodes with out_degree=0. These are the logic outputs
@@ -199,8 +203,10 @@ def run(args):
             if edge_end == logic_output_node and transitive_closure.in_degree(edge_start) == 0
         ]
 
-        # Find all edges between the input nodes and the output nodes.
-        # Note that we do NOT use the transitive closure here.
+        # Find all path edges between the input nodes and the output nodes.
+        # Note that we do NOT use the transitive closure here, as we want
+        # to find the path through the original graph, not including the
+        # additional direct paths added by the transitive closure.
         subgraph_edges = []
         for logic_input_node in logic_input_nodes:
             for path in nx.all_simple_paths(graph, logic_input_node, logic_output_node):
@@ -227,10 +233,12 @@ def run(args):
 
         # TODO: Use this logic to find termination nodes and make it a feature
         # of the Design class
+        # ===============================================
         # print('Output Termination Nodes')
         # for node in graph:
         #     if graph.out_degree[node] == 0:
         #         print(node)
+        # ===============================================
 
         print(output_node_name, '->', ', '.join(nodelist), '\n')
 
@@ -238,6 +246,13 @@ def run(args):
         # possible inputs (2**number_of_inputs))
         # to build a truth table.
         # TODO
+        #
+        # For 4-input LUTs this is fine. I am a little concerned that for
+        # e.g. checking for a specific 32-bit constant that this will get
+        # unwieldy. 4 variables is 16 checks, but 32 variables is 4 billion.
+        # I may still have to use Minisat for this.
+        #
+        #
         import itertools
         variables = len(logic_input_nodes)
         for inputs in itertools.product([True, False], repeat=variables):
@@ -246,7 +261,11 @@ def run(args):
 
         # Reduce truth table to LUT width, creating new LUTs as needed.
         # 4-input LUTs seems like a good idea
+        # https://electronics.stackexchange.com/a/169535
         # TODO
+
+        # Place and route
+        # https://www.intel.com/content/dam/www/programmable/us/en/pdfs/literature/wp/wp-01003.pdf
 
 
 
