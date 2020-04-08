@@ -1,42 +1,14 @@
 
+import sys
+import re
 import subprocess
+import itertools
 
-clauses = [
-    (1, 0),
-    (2, 0),
-    (3, 0),
-    (4, 0),
-    (5, 0),
-    (6, 0),
-    (7, 0),
-    (8, 0),
-    (-9, 0),
-    (-10, 0),
-    (-11, 0),
-    (-12, 0),
-    (-13, 0),
-    (-14, 0),
-    (-15, 0),
-    (-16, 0),
-    (17, 0),
-    (18, 0),
-    (19, 0),
-    (20, 0),
-    (21, 0),
-    (22, 0),
-    (23, 0),
-    (24, 0),
-    (-25, 0),
-    (-26, 0),
-    (-27, 0),
-    (-28, 0),
-    (-29, 0),
-    (-30, 0),
-    (-31, 0),
-    (-32, 32, 0),
-]
+import sympy
+from sympy.logic.boolalg import to_cnf
 
-def get_solutions():
+
+def get_solutions(clauses):
     solutions = []
     while True:
         script_lines = []
@@ -57,7 +29,9 @@ def get_solutions():
         is_satisfiable = p.returncode == 10
 
         if not is_satisfiable:
-            return solutions
+            # TODO: Yield solutions instead so callers can end if they just want one
+            # Strip off the trailing 0
+            return [solution[:-1] for solution in solutions]
 
         with open('minisat2_output.txt') as f:
             contents = f.read()
@@ -68,6 +42,45 @@ def get_solutions():
         clauses.append(tuple(-term for term in solution))
 
 
-solutions = get_solutions()
-for solution in solutions:
-    print(solution)
+def main():
+
+    # For a mux:
+    # Expected Truth Table
+    #
+    # x1 x2 x3 | y
+    # ---------+---
+    #  0  0  0 | 0
+    #  0  0  1 | 0
+    #  0  1  0 | 0
+    #  0  1  1 | 1    (-1,  2,  3, 0)
+    #  1  0  0 | 1    ( 1, -2, -3, 0)
+    #  1  0  1 | 0
+    #  1  1  0 | 1    ( 1,  2, -3, 0)
+    #  1  1  1 | 1    ( 1,  2,  3, 0)
+    x1, x2, x3 = sympy.symbols(['x1', 'x2', 'x3'])
+    y = x1 & ~x3 | x2 & x3
+
+    clauses = str(to_cnf(y)).split(' & ')
+    clauses = [clause[1:-1].replace(' |', '').replace('~', '-') for clause in clauses]
+    clauses = [clause.replace('x', '') + ' 0' for clause in clauses]
+    clauses = [tuple(int(part) for part in clause.split()) for clause in clauses]
+
+    solutions = get_solutions(clauses)
+    if len(solutions) == 0:
+        print('No solutions!')
+        return 1
+    num_variables = len(solutions[0])
+    solutions = set(solutions)
+
+    for terms in itertools.product([False, True], repeat=num_variables):
+        possible_solution = tuple(
+            i if value else -i
+            for i, value in enumerate(terms, 1)
+        )
+        result_bit = '1' if possible_solution in solutions else '0'
+        term_bits = ['1' if value else '0' for value in terms]
+        print(f'{" ".join(term_bits)} | {result_bit}')
+
+
+if __name__ == '__main__':
+    sys.exit(main())
