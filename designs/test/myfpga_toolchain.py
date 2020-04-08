@@ -259,12 +259,9 @@ class CircuitPlanner:
         skipped_cells = []
         for collection in cell_collections:
             skipped_cells.extend(collection.values())
-        sorted_cells = skipped_cells + sorted_cells
-
-        if skipped_cells:
-            print('Skipped cells!')
-            import pdb; pdb.set_trace();  # TODO: remove me
-            pass
+        assert not skipped_cells, 'Some cells were skipped!'
+        # TODO: Can they be added to the beginning, or is this not needed anymore?
+        # sorted_cells = skipped_cells + sorted_cells
 
         return Circuit(self.inputs, self.outputs, sorted_cells)
 
@@ -350,7 +347,43 @@ class Circuit:
 
 def run(args):
     with open(args.design_file, 'r') as f:
-        raw_design = json.load(f)
+        raw_json = f.read()
+
+        # Create a function which takes as input a combinational circuit
+        # and composes it as a structure of LUTs? Are FFs part of that
+        # as well? I should look at what the structure of the 16-bit adder
+        # and mux look like, as these will map nicely to the LUTs.
+        # A shift register would be good too, but this will likely just
+        # be a chain of logic cells with one feeding the next, as well
+        # as a reset signal and a zero.
+
+        # TODO: Create some very simple designs (one or two bits)
+        # and see what the AIG output looks like.
+
+
+
+        # Instead of getting individual bit-level gates from techmap,
+        # try parsing the output of the "memory" step with AIG output
+        # turned on.
+        #
+        # https://github.com/mvcisback/py-aiger
+        # http://www.clifford.at/yosys/cmd_write_aiger.html
+        # https://github.com/YosysHQ/yosys/issues/350
+        # See also "aigmap", instead of techmap (which if the memory thing doesn't work could be easier than trying to combine XOR,MUX,AND,OR,and NOT)
+        #
+        #
+        # The cell ports are wide now, but these could be split up.
+        # We also don't need to hard-code the LUT configs for different cell
+        # types because the AIG models included in the JSON file tell us how
+        # they should work.
+        #
+        # The "show" output from the memory step is also much easier to
+        # visualize and follow.
+
+        import re
+        # Yosys inserts comments into the JSON AIG section for some reason
+        clean_json = re.sub(r'/\*.*\*/', '', raw_json)
+        raw_design = json.loads(clean_json)
 
     circuit = parse_design(raw_design)
 

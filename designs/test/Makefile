@@ -4,7 +4,8 @@
 
 
 run: my_design.json
-	python myfpga_toolchain.py my_design.json
+	# python myfpga_toolchain.py my_design.json
+	python lut_generator.py my_design.json
 
 
 my_design.json: my_design.v my_design.ys
