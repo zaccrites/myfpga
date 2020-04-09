@@ -214,59 +214,81 @@ def run(args):
         subgraph_edges = []
         for logic_input_node in logic_input_nodes:
             for path in nx.all_simple_paths(graph, logic_input_node, logic_output_node):
+                # TODO: remove
+                path = [design.net_drivers[bit_id] for bit_id in path]
+
                 subgraph_edges.extend(path_to_edge_list(path))
 
-
-        # Do a topological sort to find function evaluation order.
+        # Find edges of the subgraph starting from the logic output node
+        # pointing back toward the logic input nodes. The depth-first
+        # order will show us the order in which to evaluate the nodes.
+        output_node_name = design.net_drivers[logic_output_node]  # TODO: remove
         subgraph = nx.DiGraph(subgraph_edges)
-        subgraph_node_ordering = list(nx.topological_sort(subgraph))
+        edges = list(nx.edge_dfs(subgraph.reverse(), output_node_name))
 
-        # TODO: Clean up the whole input/ff interface issue here
-        # TODO: Handle constants
-        nodelist = [design.net_drivers[bit_id] for bit_id in subgraph_node_ordering]
+        # Reverse the edges so that we start at the inputs and
+        # work our way toward the outputs. The edge "end" is a
+        # dependency of the edge "start".
+        nodes = []
+        for _start, end in reversed(edges):
+            nodes.append(end)
 
-        # TODO: This is another consequence of this bad interface.
-        # Since the input to a FF and a module output are both termination nodes,
-        # we have to try two different ways of getting its name.
-        try:
-            # In case we're feeding a module output
-            output_node_name = design.output_bits[logic_output_node]
-        except KeyError:
-            # In case we're feeding the input of a flip flop
-            output_node_name = design.net_drivers[logic_output_node]
+        # Append the first edge's start, as this is the last evaluated node.
+        nodes.append(edges[0][0])
 
-        # TODO: Use this logic to find termination nodes and make it a feature
-        # of the Design class
-        # ===============================================
-        # print('Output Termination Nodes')
-        # for node in graph:
-        #     if graph.out_degree[node] == 0:
-        #         print(node)
-        # ===============================================
+        print(nodes)
+        print()
 
-        print(output_node_name, '->', ', '.join(nodelist), '\n')
+        # TODO: Label edges where the graph should "break", like at FF inputs
+        # https://networkx.github.io/documentation/stable/reference/algorithms/generated/networkx.algorithms.traversal.depth_first_search.dfs_labeled_edges.html#networkx.algorithms.traversal.depth_first_search.dfs_labeled_edges
 
-        # Use Tseytin transformation to convert the design into CNF and
-        # feed to Minisat to solve for the LUT entries. In that case it
-        # may be better to use the normal techmap logic gates instead of
-        # the AIG ones (even if NAND is allowed) because any logic gates
-        # can be converted into CNF, not just AND and NOT gates.
-        # The MUX CNF sub expression isn't given on Wikipedia,
-        # but I can derive it and consider it as another logic gate type.
-        # https://en.wikipedia.org/wiki/Tseytin_transformation
-        #
-        # I still need to figure out how constants will affect the derived
-        # CNF expressions. For now I'm assuming it will just remove variables
-        # in clauses related to the affected gates.
-        #
-        # TODO
+        # # Do a topological sort to find function evaluation order.
+        # subgraph_node_ordering = list(nx.topological_sort(subgraph))
 
+        # # Duplicate each node in the list by its out_degree, as it will
+        # # be used multiple times in the logic function.
+        # # TODO: Verify that this actually works in all cases
+        # subgraph_nodes = []
+        # for subgraph_node in subgraph_node_ordering:
+        #     subgraph_nodes.extend([subgraph_node] * subgraph.out_degree[subgraph_node])
+
+        # # TODO: Clean up the whole input/ff interface issue here
+        # # TODO: Handle constants
+        # nodelist = [design.net_drivers[bit_id] for bit_id in subgraph_nodes]
+
+        # # TODO: This is another consequence of this bad interface.
+        # # Since the input to a FF and a module output are both termination nodes,
+        # # we have to try two different ways of getting its name.
+        # try:
+        #     # In case we're feeding a module output
+        #     output_node_name = design.output_bits[logic_output_node]
+        # except KeyError:
+        #     # In case we're feeding the input of a flip flop
+        #     output_node_name = design.net_drivers[logic_output_node]
+
+        # # TODO: Use this logic to find termination nodes and make it a feature
+        # # of the Design class
+        # # ===============================================
+        # # print('Output Termination Nodes')
+        # # for node in graph:
+        # #     if graph.out_degree[node] == 0:
+        # #         print(node)
+        # # ===============================================
+
+        # TODO: May need a way to keep straight which input bits in the
+        # truth table correspond to the input nodes? Some kind of map.
+        # inputs = []
+        # for node in nodes:
+        #     if node.startswith['i_']:
+        #         inputs.append(node)
+        # print(nodes)
 
         # TODO: Clean up
         variables = {}
         stack = []
-        for node in nodelist:
+        for node in nodes:
             # TODO: Really we just check that the node has in_degree=0
+            # Keep track of termination nodes AND entry nodes
             if node.startswith('i_'):
                 try:
                     variable = variables[node]
@@ -274,20 +296,19 @@ def run(args):
                     variable = sympy.symbols(str(len(variables) + 1))
                     variables[node] = variable
                 stack.append(variable)
-                continue
-
             elif node.startswith('$_NOT'):
                 operand = stack.pop()
                 stack.append(~operand)
-
             elif node.startswith('$_AND'):
                 operand1 = stack.pop()
                 operand2 = stack.pop()
                 stack.append(operand1 & operand2)
-
-            # TODO: Allow other logic gates? At least NAND
             else:
                 raise NotImplementedError(node)
+
+        for key, value in sorted(variables.items(), key=lambda item: str(item[1]), reverse=True):
+            print(f'{key}: {value}')
+        print()
 
         assert len(stack) == 1
         logic_function = stack[0]

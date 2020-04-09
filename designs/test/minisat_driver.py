@@ -71,12 +71,17 @@ def print_truth_table(solutions, *, only_solutions=False):
     num_variables = len(solutions[0])
     solutions = set(solutions)
     for possible_solution in itertools.product([False, True], repeat=num_variables):
-        is_solution = possible_solution in solutions
+        # The "possible solution" emitted here has the "most significant bit"
+        # in the last slot of the tuple. The actual solutions have the "most
+        # significant bit" in the first slot of the tuple.
+        is_solution = possible_solution[::-1] in solutions
         result_bit = '1' if is_solution else '0'
+
+        # We still want to render the most significant bit on the right
+        # hand side when printing, though.
         term_bits = ['1' if value else '0' for value in possible_solution]
         if is_solution or not only_solutions:
             print(f'{" ".join(term_bits)} | {result_bit}')
-
 
 
 def main():
