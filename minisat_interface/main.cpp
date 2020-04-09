@@ -1,89 +1,135 @@
 
+#include <cstdint>
 #include <iostream>
-#include <tuple>
+#include <fstream>
 #include <vector>
 
-#include <minisat/core/Dimacs.h>
 #include <minisat/core/Solver.h>
 #include <minisat/core/SolverTypes.h>
 #include <minisat/mtl/Vec.h>
 
 
-using Solution = std::tuple<bool, bool, bool>;
-
-
-void print_solution(const Solution& solution)
+struct Clause
 {
-    bool x1Value, x2Value, x3Value;
-    std::tie(x1Value, x2Value, x3Value) = solution;
-    std::cout << "Solution: ("
-        << x1Value << ", "
-        << x2Value << ", "
-        << x3Value << ") \n";
+    std::vector<std::int32_t> entries;
+};
+
+struct System
+{
+    std::int32_t numberOfVariables;
+    std::vector<Clause> clauses;
+    std::vector<Solution> solutions;
+};
+
+using Solution = std::vector<bool>;
+
+
+template<typename T>
+void readValue(T* pTarget, std::ifstream& file)
+{
+    file.read(reinterpret_cast<char*>(pTarget), sizeof(*pTarget));
 }
 
 
-
-int main()
+template<typename T>
+void writeValue(T value, std::ofstream& file)
 {
-    Minisat::Solver solver;
-
-    // Mux clauses
-    auto x1 = solver.newVar();
-    auto x2 = solver.newVar();
-    auto x3 = solver.newVar();
-
-    Minisat::vec<Minisat::Lit> clause1;
-    clause1.push(Minisat::mkLit(x1, true));
-    clause1.push(Minisat::mkLit(x2, true));
-
-    Minisat::vec<Minisat::Lit> clause2;
-    clause1.push(Minisat::mkLit(x1, true));
-    clause2.push(Minisat::mkLit(x3, true));
-
-    Minisat::vec<Minisat::Lit> clause3;
-    clause3.push(Minisat::mkLit(x2, true));
-    clause3.push(Minisat::mkLit(x3, false));
-
-    Minisat::vec<Minisat::Lit> clause4;
-    clause4.push(Minisat::mkLit(x3, true));
-    clause4.push(Minisat::mkLit(x3, false));
+    file.write(reinterpret_cast<const char*>(&value), sizeof(value));
+}
 
 
-    solver.addClause(clause1);
-    solver.addClause(clause2);
-    solver.addClause(clause3);
-    solver.addClause(clause4);
-
-    std::vector<Solution> solutions;
-
-    while (solver.solve())
+int main(int argc, char** argv)
+{
+    if (argc < 3)
     {
-
-        auto x1Value = static_cast<bool>(Minisat::toInt(solver.modelValue(x1)));
-        auto x2Value = static_cast<bool>(Minisat::toInt(solver.modelValue(x2)));
-        auto x3Value = static_cast<bool>(Minisat::toInt(solver.modelValue(x3)));
-        auto solution = std::make_tuple(x1Value, x2Value, x3Value);
-        print_solution(solution);
-        solutions.push_back(solution);
-
-        Minisat::vec<Minisat::Lit> newClause;
-        newClause.push(Minisat::mkLit(x1, ! x1Value));
-        newClause.push(Minisat::mkLit(x2, ! x2Value));
-        newClause.push(Minisat::mkLit(x3, ! x3Value));
-        solver.addClause(newClause);
-
+        std::cerr << "Usage: minisat_interface input_file output_file" << std::endl;
+        return 1;
     }
 
-    for (const auto& solution : solutions)
+    std::vector<System> systems;
+    std::ifstream input(argv[1], std::ios::binary);
+
+    std::int32_t numberOfSystems;
+    readValue(&numberOfSystems, input);
+    for (int i = 0; i < numberOfSystems; i++)
     {
-        print_solution(solution);
-        // bool x1Value, x2Value, x3Value;
-        // std::tie(x1Value, x2Value, x3Value) = solution;
-        // std::cout << "Solution: ("
-        //     << x1Value << ", "
-        //     << x2Value << ", "
-        //     << x3Value << ") \n";
+        System system;
+        readValue(&system.numberOfVariables, input);
+
+        std::int32_t numberOfClauses;
+        readValue(&numberOfClauses, input);
+        for (int j = 0; j < numberOfClauses; j++)
+        {
+            Clause clause;
+            std::int32_t numberOfEntries;
+            readValue(&numberOfEntries, input);
+            for (int k = 0; k < numberOfEntries; k++)
+            {
+                std::int32_t entry;
+                readValue(&entry, input);
+                clause.entries.push_back(entry);
+            }
+            system.clauses.push_back(clause);
+        }
+        systems.push_back(system);
     }
 
+    std::ofstream output(argv[2], std::ios::binary);
+    writeValue(numberOfSystems, output);
+    for (auto& system : systems)
+    {
+        Minisat::Solver solver;
+
+        std::vector<Minisat::Var> variables;
+        for (int i = 0; i < system.numberOfVariables; i++) {
+            variables.push_back(solver.newVar());
+        }
+
+        for (auto& clause : system.clauses)
+        {
+            Minisat::vec<Minisat::Lit> solverClause;
+            for (auto& entry : clause.entries)
+            {
+                // Entries start at 1, not zero.
+                auto variable = variables[std::abs(entry) - 1];
+                bool sign = entry > 0;
+                solverClause.push(Minisat::mkLit(variable, sign));
+            }
+            solver.addClause(solverClause);
+        }
+
+        // Each time the system is solved, a random solution is returned.
+        // We can get all of the solutions by disqualifying the newly found
+        // solution to for the solver to find a new solution.
+        // Eventually the system will be unsolvable due to having disqualfied
+        // all solutions, so we know we're done.
+        while (solver.solve())
+        {
+            Solution solution;
+            Minisat::vec<Minisat::Lit> newSolverClause;
+
+            for (auto& variable : variables)
+            {
+                auto value = static_cast<bool>(Minisat::toInt(solver.modelValue(variable)));
+                solution.push_back(value);
+
+                // Add the reverse of the solution to the clauses to get the next solution.
+                newSolverClause.push(Minisat::mkLit(variable, ! value));
+            }
+            system.solutions.push_back(solution);
+            solver.addClause(newSolverClause);
+        }
+
+        writeValue(system.numberOfVariables, output);
+        writeValue(static_cast<std::int32_t>(system.solutions.size()), output);
+        for (auto& solution : system.solutions)
+        {
+            for (const auto&& entry : solution)
+            {
+                writeValue(static_cast<std::int32_t>(entry), output);
+            }
+        }
+    }
+
+    return 0;
 }

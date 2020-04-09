@@ -1,8 +1,4 @@
 
-# find_package(MINISAT)
-
-# add_library()
-
 add_executable(minisat_interface
     main.cpp
 )
@@ -15,10 +11,8 @@ target_include_directories(minisat_interface PRIVATE SYSTEM
     /usr/include/minisat
 )
 
-
 target_compile_options(minisat_interface PRIVATE
-    -Og
-    -g3
+    -O2
     -fdiagnostics-color
     -Wall
     -Wextra
