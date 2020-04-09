@@ -9,6 +9,10 @@ from typing import List
 
 from enum import Enum
 
+import minisat_driver
+import sympy
+
+
 
 @dataclass
 class LogicGate:
@@ -256,6 +260,41 @@ def run(args):
         # in clauses related to the affected gates.
         #
         # TODO
+
+
+        # TODO: Clean up
+        variables = {}
+        stack = []
+        for node in nodelist:
+            # TODO: Really we just check that the node has in_degree=0
+            if node.startswith('i_'):
+                try:
+                    variable = variables[node]
+                except KeyError:
+                    variable = sympy.symbols(str(len(variables) + 1))
+                    variables[node] = variable
+                stack.append(variable)
+                continue
+
+            elif node.startswith('$_NOT'):
+                operand = stack.pop()
+                stack.append(~operand)
+
+            elif node.startswith('$_AND'):
+                operand1 = stack.pop()
+                operand2 = stack.pop()
+                stack.append(operand1 & operand2)
+
+            # TODO: Allow other logic gates? At least NAND
+            else:
+                raise NotImplementedError(node)
+
+        assert len(stack) == 1
+        logic_function = stack[0]
+        clauses = list(minisat_driver.get_clauses(logic_function))
+        solutions = list(minisat_driver.get_solutions(clauses))
+        minisat_driver.print_truth_table(solutions, only_solutions=False)
+
 
         # Reduce truth table to LUT width, creating new LUTs as needed.
         # 4-input LUTs seems like a good idea

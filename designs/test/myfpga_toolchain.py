@@ -16,6 +16,8 @@ from collections import namedtuple, defaultdict
 
 import networkx as nx
 
+
+
 # TODO: Instead of function "cells", just convert all Yosys primitives into
 # LUTs in a first pass. The second pass converts LUTs and flip flops into
 # logic cells.

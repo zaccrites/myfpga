@@ -58,6 +58,27 @@ def get_solutions(clauses):
             yield tuple(bool(x) for x in solution)
 
 
+def get_clauses(expr):
+    cnf = to_cnf(expr)
+    for raw_clause in str(to_cnf(expr)).split(' & '):
+        raw_clause = raw_clause.lstrip('(').rstrip(')')
+        raw_terms = raw_clause.split(' | ')
+        raw_terms = [raw_term.replace('~', '-') for raw_term in raw_terms]
+        yield tuple(int(raw_term) for raw_term in raw_terms)
+
+
+def print_truth_table(solutions, *, only_solutions=False):
+    num_variables = len(solutions[0])
+    solutions = set(solutions)
+    for possible_solution in itertools.product([False, True], repeat=num_variables):
+        is_solution = possible_solution in solutions
+        result_bit = '1' if is_solution else '0'
+        term_bits = ['1' if value else '0' for value in possible_solution]
+        if is_solution or not only_solutions:
+            print(f'{" ".join(term_bits)} | {result_bit}')
+
+
+
 def main():
     # For a mux:
     # Expected Truth Table
@@ -72,27 +93,23 @@ def main():
     #  1  0  1 | 0
     #  1  1  0 | 1    ( 1,  2, -3, 0)
     #  1  1  1 | 1    ( 1,  2,  3, 0)
-    x1, x2, x3 = sympy.symbols(['x1', 'x2', 'x3'])
+    x1, x2, x3 = sympy.symbols(['1', '2', '3'])
     y = x1 & ~x3 | x2 & x3
 
-    # For checking a specific 64 bit number:
-    number = 0xdeadbeefcafebabe
-    variables = sympy.symbols([f'x{i+1}' for i in range(64)])
-    y = BooleanTrue()
-    for i, variable in enumerate(variables):
-        if number & (1 << i):
-            y &= variable
-        else:
-            y &= ~variable
-
-    # print(to_cnf(y))
-    clauses = str(to_cnf(y)).split(' & ')
-    clauses = [clause.lstrip('(').rstrip(')').replace(' |', '').replace('~', '-') for clause in clauses]
-    clauses = [clause.replace('x', '') for clause in clauses]
-    clauses = [tuple(int(part) for part in clause.split()) for clause in clauses]
+    # # For checking a specific 64 bit number:
+    # number = 0xdeadbeefcafebabe
+    # variables = sympy.symbols([f'x{i+1}' for i in range(64)])
+    # y = BooleanTrue()
+    # for i, variable in enumerate(variables):
+    #     if number & (1 << i):
+    #         y &= variable
+    #     else:
+    #         y &= ~variable
 
     start = datetime.now()
+    clauses = list(get_clauses(y))
     solutions = list(get_solutions(clauses))
+    duration = datetime.now() - start
 
     if len(solutions) == 0:
         print('No solutions!')
@@ -102,17 +119,8 @@ def main():
     else:
         print(f'{len(solutions)} solutions')
 
-    print(f'Found in {(datetime.now() - start).total_seconds():.3f} seconds')
-
-    # num_variables = len(solutions[0])
-    # solutions = set(solutions)
-
-    # for possible_solution in itertools.product([False, True], repeat=num_variables):
-    #     result_bit = '1' if possible_solution in solutions else '0'
-    #     term_bits = ['1' if value else '0' for value in possible_solution]
-
-    #     # if result_bit == '1':
-    #     # print(f'{" ".join(term_bits)} | {result_bit}')
+    print(f'Found in {duration.total_seconds():.3f} seconds')
+    print(solutions)
 
 
 if __name__ == '__main__':

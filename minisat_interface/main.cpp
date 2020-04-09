@@ -38,6 +38,13 @@ void writeValue(T value, std::ofstream& file)
 }
 
 
+// A couple other tricks I might be able to use to speed this up if necessary:
+// 1. Solve each system in a separate thread.
+// 2. For systems with more solutions than non-solutions, it will be faster
+//    to solve the negated logic expression and infer the inverse truth table
+//    from the identified non-solutions. Solving both in parallel and using
+//    the results from whichever finishes first will be faster.
+
 int main(int argc, char** argv)
 {
     if (argc < 3)
