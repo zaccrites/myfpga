@@ -187,6 +187,19 @@ def run(args):
     # we can be certain that the correct logic function will be evaluated
     # for the output, and we can also be certain that the following logic
     # will not have to duplicate an expensive computation.
+    #
+    # Well, maybe. For example, a full adder shares an AND gate between the
+    # sum and carry out bits, but there's no reason that the one LUT should
+    # feed into the other. The two are independent based on their inputs.
+    # Maybe a naive solution to this is to try both breaking at module outputs
+    # AND not and just choosing the more resource efficient one.
+    # It might be easier to just not break at outputs. Breaking at FF inputs
+    # is probably required though. Anything which uses that input in further
+    # logic should still be able to. If it's really expensive they should
+    # probably be pipelining it anyway.
+
+    # Or just forget this entire thing and let Yosys generate the LUTs too.
+    # No need for this DAG or SAT at all.
 
 
     # TODO: Move this logic into the Design class
