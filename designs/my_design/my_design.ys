@@ -1,0 +1,6 @@
+
+read_verilog my_design.v
+hierarchy -check -top my_design
+synth -lut 4 -flatten
+write_json my_design.json
+show
