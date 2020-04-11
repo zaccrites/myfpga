@@ -1,6 +1,5 @@
 """Implement a synthesized design."""
 
-import re
 import sys
 import json
 import argparse
@@ -72,6 +71,7 @@ class LookUpTable:
 @dataclass(frozen=True, eq=True)
 class ModulePort:
     name: str
+    bit_index: int
     is_input: bool
 
 
@@ -166,14 +166,12 @@ class Design:
         for name, bits in self.inputs.items():
             for i, bit in enumerate(bits):
                 assert bit not in connection_outputs
-                port_bit_name = name if len(bits) == 1 else f'{name}[{i}]'
-                module_port = ModulePort(name=port_bit_name, is_input=True)
+                module_port = ModulePort(name=name, bit_index=i, is_input=True)
                 connection_outputs[bit] = module_port
 
         for name, bits in self.outputs.items():
             for i, bit in enumerate(bits):
-                port_bit_name = name if len(bits) == 1 else f'{name}[{i}]'
-                module_port = ModulePort(name=port_bit_name, is_input=False)
+                module_port = ModulePort(name=name, bit_index=i, is_input=False)
                 connection_inputs[bit].append((module_port, {}))
 
         for name, ff_config in self.flip_flops.items():
@@ -203,8 +201,8 @@ class Design:
 
 
 class ImplementationError(RuntimeError):
-    # TODO: Take reference to object which caused the error
-    # TODO: Report errors using verilog source file and line where possible
+    # FUTURE: Take reference to object which caused the error for better reporting
+    # FUTURE: Report errors using verilog source file and line where possible
     pass
 
 
@@ -212,18 +210,23 @@ class Implementation:
 
     def __init__(self, design):
         self.design = design
-
-        # Create a new graph with logic cells instead of discrete
-        # LUTs and flip flops.
         source_graph = self.design.build_graph()
-        self.graph = nx.DiGraph()
+        self.clock_input_port = self._sanity_check_flip_flops(source_graph)
+        self.graph = self._create_logic_cells(source_graph)
 
-        # If this is still None at the end of the process then it just
-        # means that there is no clocked logic in the design. That's okay.
-        self.clock_input_port = None
+    @staticmethod
+    def _sanity_check_flip_flops(graph):
+        """Verify that flip flops are configured as expected.
 
-        # Sanity check flip flop clocks before doing anything else.
-        for source, sink, port in source_graph.edges.data('port'):
+        At this time only a single clock domain is supported.
+        If there is clocked logic in the design, it must come from a
+        module input port and all flip flops must use it.
+        This module port is returned if found, or None if there is
+        no clocked logic in the design.
+
+        """
+        clock_input_port = None
+        for source, sink, port in graph.edges.data('port'):
             if isinstance(sink, FlipFlop) and port is FlipFlopInputPort.clock:
                 # At this time FFs must be clocked by a dedicated clock tree,
                 # not from programmable logic.
@@ -232,24 +235,35 @@ class Implementation:
                         f'{sink.ff.name} clocked from non-module input {source.name}'
                     )
 
-                # At this time only a single clock domain is supported
-                if self.clock_input_port is None:
-                    self.clock_input_port = source
-                elif source is not self.clock_input_port:
+                if clock_input_port is None:
+                    clock_input_port = source
+                elif source is not clock_input_port:
                     raise ImplementationError(
                         f'{sink.ff.name} should be clocked by main clock source '
-                        f'{self.clock_input_port.name}, not {source.name}'
+                        f'{clock_input_port.name}, not {source.name}'
                     )
+        return clock_input_port
+
+    @classmethod
+    def _create_logic_cells(cls, source_graph):
+        """Merge LUTs and flip flops in the design into combined logic cells.
+
+        Sometimes this cannot be done, such as when an input feeds directly
+        into a flip flop or when the output of a LUT is used before it
+        passes into a flip flop. In that case additional logic cells are
+        created with passthrough LUTs or which bypass their flip flop as needed.
+
+        """
+        graph = nx.DiGraph()
 
         # When we replace nodes with a logic cell, this is how we will
         # reconstruct the connections in the new graph.
         node_replacements = dict()
-        merged_nodes = set()
 
         # First pass: find LUTs which feed directly into a single FF
         # We cannot merge a LUT and flip flop if anything other than the
         # FF input is using the LUT output.
-        for source, sink, port in source_graph.edges.data('port'):
+        for source, sink, port in list(source_graph.edges.data('port')):
             criteria = (
                 isinstance(source, LookUpTable)
                 and isinstance(sink, FlipFlop)
@@ -258,85 +272,51 @@ class Implementation:
             )
             if criteria:
                 logic_cell = LogicCell(lut=source, ff=sink)
-                # self.graph.add_node(logic_cell)
                 node_replacements[source] = logic_cell
                 node_replacements[sink] = logic_cell
-                merged_nodes.add((source, sink))
-
-        def _replace_node(node, *, is_source):
-            if node in node_replacements:
-                return node_replacements[node]
-            elif isinstance(node, LookUpTable):
-                logic_cell = LogicCell(lut=node, ff=None)
-                node_replacements[node] = logic_cell
-                return logic_cell
-            elif isinstance(node, FlipFlop):
-                logic_cell = LogicCell(lut=None, ff=node)
-                node_replacements[node] = logic_cell
-                return logic_cell
-            elif isinstance(node, ModulePort):
-                assert is_source == node.is_input
-                return node
-            elif not isinstance(node, LogicCell):
-                raise NotImplementedError(node)
+                source_graph.remove_edge(source, sink)
 
         # Second pass: convert the remaining LUTs and FFs into standlone logic cells.
         for source, sink, port in source_graph.edges.data('port'):
-            if (source, sink) in merged_nodes:
-                continue
-            source = _replace_node(source, is_source=True)
-            sink = _replace_node(sink, is_source=False)
+            source = cls._replace_node(source, node_replacements, is_source=True)
+            sink = cls._replace_node(sink, node_replacements, is_source=False)
 
             # Strip off FF input ports since they're not useful anymore.
             if isinstance(port, int):
-                self.graph.add_edge(source, sink, port=port)
+                graph.add_edge(source, sink, port=port)
             elif port is FlipFlopInputPort.clock:
-                self.graph.add_edge(source, sink, port='clock')
+                graph.add_edge(source, sink, port='clock')
             else:
-                self.graph.add_edge(source, sink)
+                graph.add_edge(source, sink)
 
+        return graph
 
-# Use MiniSat for solving routing. Each switch in each switchbox can be
-# represented as a variable (or two, really-- one in each direction).
-# The desired connections between logic and I/O blocks are the clauses,
-# insisting that certain nodes be connected and others not connected.
-# We only need a single solution in that case, but may ask the solver
-# to generate a handful for purposes of selecting the most efficient.
-# I can modify the minisat_driver to stop at N solutions, or just
-# call the binary normally if only a single solution is required.
-#
-# See also https://codingnest.com/modern-sat-solvers-fast-neat-and-underused-part-2-of-n/
-#
-# This also means that we don't necessarily need a universal gate
-# to make things easy. A disjoint gate will work too, we may just need
-# to shuffle connections around to find the right way to connect things.
-# The SAT solver may be able to solve for that too.
-# We can also shuffle LUT inputs as needed.
-#
-# Sympy's boolean simplification may help here as there are likely to be
-# many, many variables and clauses.
-#
-# Constraints:
-#
-#    1. A switch may be driven-left, driven-top, or closed (not driven).
-#       It may NOT be driven in both directions at the same time.
-#
-#    2. ...
-#
-
-# How do we avoid bad solutions like huge unnecessary loops?
-# Do we include constraints that try to guide the solver to only using
-# as few hops as possible, removing them when necessary if the system
-# is not solvable? Or do we start with something general and add constraints
-# to prod the solver to something more reasonable?
-# Simulated annealing will probably help here, as it can add constraints
-# and see if they help or hurt in each generation as it drives towards an
-# optimal solution.
+    @classmethod
+    def _replace_node(cls, node, node_replacements, *, is_source):
+        # Logic cells of combined LUT and FF are already in node_replacements
+        if node in node_replacements:
+            return node_replacements[node]
+        elif isinstance(node, LookUpTable):
+            # Otherwise we can create a new logic cell with a bypassed flip flop
+            logic_cell = LogicCell(lut=node, ff=None)
+            node_replacements[node] = logic_cell
+            return logic_cell
+        elif isinstance(node, FlipFlop):
+            # ... or with a passthrough LUT.
+            logic_cell = LogicCell(lut=None, ff=node)
+            node_replacements[node] = logic_cell
+            return logic_cell
+        elif isinstance(node, ModulePort):
+            # At this point the design, all ports are outputs.
+            # They should map directly to I/O cells as-is.
+            assert is_source == node.is_input
+            return node
+        elif not isinstance(node, LogicCell):
+            raise NotImplementedError(node)
 
 
 class Simulator:
 
-    # TODO: Simulate implementation instead of Design
     def __init__(self, implementation):
         self.implementation = implementation
         graph = implementation.graph.copy()
@@ -354,46 +334,15 @@ class Simulator:
 
         # Keep track of each node's source for the simulation,
         # including the output nodes we remove later.
-        self.node_sources = {}
-        for node in graph.nodes:
-            edges = [
-                (edge[0], edge[2].get('port'))
-                for edge in graph.in_edges(node, data=True)
-            ]
-            if isinstance(node, LogicCell):
-                # For the simulation we only care about FF inputs
-                edges = [edge for edge in edges if edge[1] != 'clock']
-                edges.sort(key=lambda edge: edge[1])
-                self.node_sources[node] = [edge[0] for edge in edges]
-            elif isinstance(node, ModulePort):
-                if node.is_input:
-                    assert not edges
-                else:
-                    assert len(edges) == 1
-                    self.node_sources[node] = edges[0]
-            else:
-                raise NotImplementedError(node)
+        self.node_sources = {
+            node: self._find_node_sources(graph, node)
+            for node in graph.nodes
+        }
 
         # Remove module port nodes since they are not useful as simulation
         # nodes, only for mapping a name to a net state.
-        # TODO: Fix this interface. I shouldn't have to parse the names with regex.
-        all_module_ports = [node for node in graph.nodes if isinstance(node, ModulePort)]
-        pattern = r'^([a-zA-Z_][a-zA-Z0-9_]+)(?:\[(\d+)\])?$'
-
-        def _find_module_ports(*, inputs):
-            result = {}
-            module_ports = (port for port in all_module_ports if port.is_input == inputs)
-            for port in module_ports:
-                match = re.match(pattern, port.name)
-                if match is not None:
-                    bit_index = int(match.group(2) or 0)
-                    result.setdefault(match.group(1), []).append((bit_index, port))
-            for name, ports in result.items():
-                yield name, [entry[1] for entry in sorted(ports)]
-
-        self.inputs = dict(_find_module_ports(inputs=True))
-        self.outputs = dict(_find_module_ports(inputs=False))
-
+        self.inputs = self._find_module_ports(graph, inputs=True)
+        self.outputs = self._find_module_ports(graph, inputs=False)
         for node in list(graph.nodes):
             if isinstance(node, ModulePort):
                 graph.remove_node(node)
@@ -411,6 +360,42 @@ class Simulator:
         self.eval_order = list(nx.topological_sort(graph))
         assert all(isinstance(node, LogicCell) for node in self.eval_order)
 
+    @staticmethod
+    def _find_node_sources(graph, node):
+        edges = [
+            (source, attrs.get('port'))
+            for source, _sink, attrs in graph.in_edges(node, data=True)
+        ]
+        # For the simulation we only care about flip flop data inputs
+        # FUTURE: Will need to revisit this if adding support for more clock domains.
+        edges = [(source, port) for source, port in edges if port != 'clock']
+        # Sort by port number
+        edges.sort(key=lambda edge: edge[1])
+        if isinstance(node, LogicCell):
+            return [source for source, port in edges]
+        elif isinstance(node, ModulePort):
+            if node.is_input:
+                # Input nodes should never have input sources
+                assert not edges
+            else:
+                # Output nodes should always have exactly one input source
+                assert len(edges) == 1
+                return [edges[0][0]]
+        else:
+            raise NotImplementedError(node)
+
+    @staticmethod
+    def _find_module_ports(graph, *, inputs):
+        result = {}
+        ports = [
+            node for node in graph.nodes
+            if isinstance(node, ModulePort) and node.is_input == inputs
+        ]
+        ports.sort(key=lambda port: (port.name, port.bit_index))
+        for port in ports:
+            result.setdefault(port.name, []).append(port)
+        return result
+
     def set_input(self, name, value):
         try:
             ports = self.inputs[name]
@@ -427,10 +412,11 @@ class Simulator:
         except KeyError as exc:
             raise RuntimeError(f'No such output port "{name}"') from exc
         else:
-            port_sources = [self.node_sources[port][0] for port in ports]
             result = 0
             for i, port in enumerate(ports):
-                result |= int(self.net_states[port_sources[i]]) << i
+                port_sources = self.node_sources[port]
+                assert len(port_sources) == 1
+                result |= int(self.net_states[port_sources[0]]) << i
             return result
 
     @property

@@ -16,9 +16,6 @@ def get_solutions(clauses):
     input_file_path = os.path.join(tempdir, 'solver_input.bin')
     output_file_path = os.path.join(tempdir, 'solver_output.bin')
 
-    # TODO: Provide an interface to solve multiple systems in a single
-    # run. Potentially all combinational logic circuit truth tables
-    # can be solved at once.
     number_of_systems = 1
 
     variables = set()
