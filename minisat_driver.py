@@ -1,7 +1,6 @@
 
 import os
 import sys
-import re
 import subprocess
 import itertools
 import struct
@@ -9,7 +8,7 @@ import tempfile
 from datetime import datetime
 
 import sympy
-from sympy.logic.boolalg import to_cnf, BooleanTrue, BooleanFalse
+from sympy.logic.boolalg import to_cnf
 
 
 def get_solutions(clauses):
@@ -59,7 +58,6 @@ def get_solutions(clauses):
 
 
 def get_clauses(expr):
-    cnf = to_cnf(expr)
     for raw_clause in str(to_cnf(expr)).split(' & '):
         raw_clause = raw_clause.lstrip('(').rstrip(')')
         raw_terms = raw_clause.split(' | ')

@@ -57,7 +57,10 @@ class LookUpTableConfig:
         num_entries = 2 ** len(self.input_bits)
         config_max_value = 2 ** num_entries - 1
         if not (0 <= self.config <= config_max_value):
-            raise ValueError(f'For a {len(self.input_bits)}-LUT, the configuration value must be at most 0x{config_max_value:x}')
+            raise ValueError(
+                f'For a {len(self.input_bits)}-LUT, '
+                f'the configuration value must be at most 0x{config_max_value:x}'
+            )
 
 
 @dataclass(frozen=True, eq=True)
@@ -147,7 +150,6 @@ class Design:
             output_bit=cell['connections']['Q'][0],
         )
 
-
     @classmethod
     def load(cls, f):
         return cls(json.load(f))
@@ -177,8 +179,10 @@ class Design:
         for name, ff_config in self.flip_flops.items():
             assert ff_config.output_bit not in connection_outputs
             ff = FlipFlop(name=name, rising_edge_trigger=ff_config.rising_edge_trigger)
-            connection_inputs[ff_config.clock_bit].append((ff, {'port': FlipFlopInputPort.clock}))
-            connection_inputs[ff_config.data_input_bit].append((ff, {'port': FlipFlopInputPort.data}))
+            connection_inputs[ff_config.clock_bit].append(
+                (ff, {'port': FlipFlopInputPort.clock}))
+            connection_inputs[ff_config.data_input_bit].append(
+                (ff, {'port': FlipFlopInputPort.data}))
             connection_outputs[ff_config.output_bit] = ff
 
         for name, lut_config in self.lookup_tables.items():
@@ -224,13 +228,18 @@ class Implementation:
                 # At this time FFs must be clocked by a dedicated clock tree,
                 # not from programmable logic.
                 if not (isinstance(source, ModulePort) and source.is_input):
-                    raise ImplementationError(f'{sink.ff.name} clocked from non-module input {source.name}')
+                    raise ImplementationError(
+                        f'{sink.ff.name} clocked from non-module input {source.name}'
+                    )
 
                 # At this time only a single clock domain is supported
                 if self.clock_input_port is None:
                     self.clock_input_port = source
                 elif source is not self.clock_input_port:
-                    raise ImplementationError(f'{sink.ff.name} should be clocked by main clock source {self.clock_input_port.name}, not {source.name}')
+                    raise ImplementationError(
+                        f'{sink.ff.name} should be clocked by main clock source '
+                        f'{self.clock_input_port.name}, not {source.name}'
+                    )
 
         # When we replace nodes with a logic cell, this is how we will
         # reconstruct the connections in the new graph.
@@ -287,7 +296,6 @@ class Implementation:
                 self.graph.add_edge(source, sink)
 
 
-
 # Use MiniSat for solving routing. Each switch in each switchbox can be
 # represented as a variable (or two, really-- one in each direction).
 # The desired connections between logic and I/O blocks are the clauses,
@@ -307,15 +315,14 @@ class Implementation:
 #
 # Sympy's boolean simplification may help here as there are likely to be
 # many, many variables and clauses.
-
+#
 # Constraints:
-'''
-    1. A switch may be driven-left, driven-top, or closed (not driven).
-       It may NOT be driven in both directions at the same time.
-
-    2.
-
-'''
+#
+#    1. A switch may be driven-left, driven-top, or closed (not driven).
+#       It may NOT be driven in both directions at the same time.
+#
+#    2. ...
+#
 
 # How do we avoid bad solutions like huge unnecessary loops?
 # Do we include constraints that try to guide the solver to only using
@@ -325,8 +332,6 @@ class Implementation:
 # Simulated annealing will probably help here, as it can add constraints
 # and see if they help or hurt in each generation as it drives towards an
 # optimal solution.
-
-
 
 
 class Simulator:
@@ -374,6 +379,7 @@ class Simulator:
         # TODO: Fix this interface. I shouldn't have to parse the names with regex.
         all_module_ports = [node for node in graph.nodes if isinstance(node, ModulePort)]
         pattern = r'^([a-zA-Z_][a-zA-Z0-9_]+)(?:\[(\d+)\])?$'
+
         def _find_module_ports(*, inputs):
             result = {}
             module_ports = (port for port in all_module_ports if port.is_input == inputs)
@@ -460,7 +466,6 @@ class Simulator:
     def eval(self):
         self.current_clock_state = self.net_states[self.implementation.clock_input_port]
 
-        clocked_bit_updates = {}
         for logic_cell in self.eval_order:
             self._simulate_logic_cell(logic_cell)
 
