@@ -1,10 +1,12 @@
 """Implement a synthesized design."""
 
+import re
 import sys
 import json
 import argparse
 import operator
 import functools
+from typing import List
 from enum import Enum
 from collections import defaultdict
 from dataclasses import dataclass
@@ -23,36 +25,12 @@ import networkx as nx
 #                or into the simulated FPGA running within a real FPGA.
 
 
-# class FlipFlop:
-
-#     def __init__(self, *, name, clock, input, output, rising_edge_trigger=True):
-#         self.name = name
-#         self.clock = clock
-#         self.input = input
-#         self.output = output
-#         self.rising_edge_trigger = rising_edge_trigger
-
-#     def simulate(self, net_states, last_net_states):
-#         """Return the new value of the flip flop at the end of this clock cycle."""
-#         last_clock_state = last_net_states[self.clock]
-#         new_clock_state = net_states[self.clock]
-#         is_rising_clock_edge = not last_clock_state and new_clock_state
-#         is_falling_clock_edge = last_clock_state and not new_clock_state
-#         triggered = (
-#             (self.rising_edge_trigger and is_rising_clock_edge) or
-#             (not self.rising_edge_trigger and is_falling_clock_edge)
-#         )
-#         if triggered:
-#             return net_states[self.input]
-#         else:
-#             return last_net_states[self.output]
-
-#     def __str__(self):
-#         return self.name
-
-#     def __repr__(self):
-#         fmt = '{}(name={!r}, clock={!r}, input={!r}, output={!r}'
-#         return fmt.format(self.__class__.__name__, self.name, self.clock, self.input, self.output)
+@dataclass
+class FlipFlopConfig:
+    rising_edge_trigger: bool
+    clock_bit: int
+    data_input_bit: int
+    output_bit: int
 
 
 @dataclass(frozen=True, eq=True)
@@ -61,15 +39,9 @@ class FlipFlop:
     rising_edge_trigger: bool
 
 
-from typing import List
-
-
-@dataclass
-class FlipFlopConfig:
-    rising_edge_trigger: bool
-    clock_bit: int
-    data_input_bit: int
-    output_bit: int
+class FlipFlopInputPort(Enum):
+    clock = 0
+    data = 1
 
 
 @dataclass
@@ -94,59 +66,22 @@ class LookUpTable:
     config: int
 
 
-
-
-# class LookUpTable:
-
-#     def __init__(self, *, name, config, inputs, output):
-#         if not (0 <= config <= 0xffff):
-#             raise ValueError('Config must be a 16 bit unsigned number')
-#         if len(inputs) > 4:
-#             raise ValueError('LUT must have 4 or fewer inputs')
-#         self.name = name
-#         self.config = config
-#         self.inputs = inputs
-#         self.output = output
-
-#     def simulate(self, net_states):
-#         """Return the new value of the driven net at this moment in time."""
-#         input_bits = [net_states[bit_id] for bit_id in self.inputs]
-#         bit_masks = [(1 << i if bit_set else 0) for i, bit_set in enumerate(input_bits)]
-#         config_index = functools.reduce(operator.or_, bit_masks)
-#         config_mask = 1 << config_index
-#         return self.config & config_mask != 0
-
-#     def __str__(self):
-#         return self.name
-
-#     def __repr__(self):
-#         config = f'0b{self.config:0{2**len(self.inputs)}b}'
-#         fmt = '{}(name={!r}, config={}, inputs={!r}, output={!r})'
-#         return fmt.format(self.__class__.__name__, self.name, config, self.inputs, self.output)
-
-
 @dataclass(frozen=True, eq=True)
 class ModulePort:
     name: str
     is_input: bool
 
 
+@dataclass(frozen=True, eq=True)
+class LogicCell:
+    lut: LookUpTable
+    ff: FlipFlop
 
 
-class FlipFlopInputPort(Enum):
-    clock = 0
-    data = 1
-
-# @dataclass(frozen=True, eq=True)
-# class FlipFlopInputConnection:
-#     ff: FlipFlop
-#     port: FlipFlopInputPort
-
-
-# @dataclass(frozen=True, eq=True)
-# class LookUpTableInputConnection:
-#     lut: LookUpTable
-#     port: int
+@dataclass(frozen=True, eq=True)
+class LogicCellInputConnection:
+    lut_port: int
+    logic_cell: LogicCell
 
 
 class Design:
@@ -240,14 +175,6 @@ class Design:
                 connection_inputs[bit].append((module_port, {}))
 
         for name, ff_config in self.flip_flops.items():
-            # assert ff_config.output_bit not in connection_outputs
-            # ff = FlipFlop(name=name, rising_edge_trigger=ff_config.rising_edge_trigger)
-            # ff_clock = FlipFlopInputConnection(ff=ff, port=FlipFlopInputPort.clock)
-            # ff_data_input = FlipFlopInputConnection(ff=ff, port=FlipFlopInputPort.data)
-            # connection_inputs[ff_config.clock_bit].add(ff_clock)
-            # connection_inputs[ff_config.data_input_bit].add(ff_data_input)
-            # connection_outputs[ff_config.output_bit] = ff
-
             assert ff_config.output_bit not in connection_outputs
             ff = FlipFlop(name=name, rising_edge_trigger=ff_config.rising_edge_trigger)
             connection_inputs[ff_config.clock_bit].append((ff, {'port': FlipFlopInputPort.clock}))
@@ -255,20 +182,11 @@ class Design:
             connection_outputs[ff_config.output_bit] = ff
 
         for name, lut_config in self.lookup_tables.items():
-            # assert lut_config.output_bit not in connection_outputs
-            # lut = LookUpTable(name=name, config=lut_config.config)
-            # for i, input_bit in enumerate(lut_config.input_bits):
-            #     lut_input = LookUpTableInputConnection(lut=lut, port=i)
-            #     connection_inputs[input_bit].add(lut_input)
-            # connection_outputs[lut_config.output_bit] = lut
-
             assert lut_config.output_bit not in connection_outputs
             lut = LookUpTable(name=name, config=lut_config.config)
             for i, input_bit in enumerate(lut_config.input_bits):
-                # lut_input = LookUpTableInputConnection(lut=lut, port=i)
                 connection_inputs[input_bit].append((lut, {'port': i}))
             connection_outputs[lut_config.output_bit] = lut
-
 
         graph = nx.DiGraph()
         for bit_id, source in connection_outputs.items():
@@ -280,23 +198,10 @@ class Design:
         return self.name
 
 
-@dataclass(frozen=True, eq=True)
-class LogicCell:
-    lut: LookUpTable
-    ff: FlipFlop
-
-
-@dataclass(frozen=True, eq=True)
-class LogicCellInputConnection:
-    lut_port: int
-    logic_cell: LogicCell
-
-
 class ImplementationError(RuntimeError):
     # TODO: Take reference to object which caused the error
     # TODO: Report errors using verilog source file and line where possible
     pass
-
 
 
 class Implementation:
@@ -376,6 +281,8 @@ class Implementation:
             # Strip off FF input ports since they're not useful anymore.
             if isinstance(port, int):
                 self.graph.add_edge(source, sink, port=port)
+            elif port is FlipFlopInputPort.clock:
+                self.graph.add_edge(source, sink, port='clock')
             else:
                 self.graph.add_edge(source, sink)
 
@@ -425,55 +332,144 @@ class Implementation:
 class Simulator:
 
     # TODO: Simulate implementation instead of Design
-    def __init__(self, design):
-        self.design = design
-        self.graph = self.design.build_graph()
-        self.eval_order = [(node, self.graph.nodes[node]) for node in nx.topological_sort(self.graph)]
+    def __init__(self, implementation):
+        self.implementation = implementation
+        graph = implementation.graph.copy()
 
-        self.net_states = {node: False for node in self.graph.nodes}
-        self.previous_net_states = dict(self.net_states)
-        self.clock_states = {
-            node: False for node in self.graph.nodes
-            if self.graph.nodes[node].get('clocked')
+        # Keep track of net states for the simulation.
+        # We include module inputs as these drive nets,
+        # but not module outputs as these are driven by other nets.
+        self.net_states = {
+            node: False for node in graph.nodes
+            if not (isinstance(node, ModulePort) and not node.is_input)
         }
+        self.last_clock_state = False
+        self.current_clock_state = False
+        self.pending_flip_flop_updates = {}
+
+        # Keep track of each node's source for the simulation,
+        # including the output nodes we remove later.
+        self.node_sources = {}
+        for node in graph.nodes:
+            edges = [
+                (edge[0], edge[2].get('port'))
+                for edge in graph.in_edges(node, data=True)
+            ]
+            if isinstance(node, LogicCell):
+                # For the simulation we only care about FF inputs
+                edges = [edge for edge in edges if edge[1] != 'clock']
+                edges.sort(key=lambda edge: edge[1])
+                self.node_sources[node] = [edge[0] for edge in edges]
+            elif isinstance(node, ModulePort):
+                if node.is_input:
+                    assert not edges
+                else:
+                    assert len(edges) == 1
+                    self.node_sources[node] = edges[0]
+            else:
+                raise NotImplementedError(node)
+
+        # Remove module port nodes since they are not useful as simulation
+        # nodes, only for mapping a name to a net state.
+        # TODO: Fix this interface. I shouldn't have to parse the names with regex.
+        all_module_ports = [node for node in graph.nodes if isinstance(node, ModulePort)]
+        pattern = r'^([a-zA-Z_][a-zA-Z0-9_]+)(?:\[(\d+)\])?$'
+        def _find_module_ports(*, inputs):
+            result = {}
+            module_ports = (port for port in all_module_ports if port.is_input == inputs)
+            for port in module_ports:
+                match = re.match(pattern, port.name)
+                if match is not None:
+                    bit_index = int(match.group(2) or 0)
+                    result.setdefault(match.group(1), []).append((bit_index, port))
+            for name, ports in result.items():
+                yield name, [entry[1] for entry in sorted(ports)]
+
+        self.inputs = dict(_find_module_ports(inputs=True))
+        self.outputs = dict(_find_module_ports(inputs=False))
+
+        for node in list(graph.nodes):
+            if isinstance(node, ModulePort):
+                graph.remove_node(node)
+
+        # We have to break the graph wherever a logic cell uses its
+        # flip flop output in order to guarantee that this is a DAG.
+        edges_to_remove = [
+            (source, sink) for source, sink in graph.edges
+            if (isinstance(source, LogicCell) and source.ff is not None)
+        ]
+        for source, sink in edges_to_remove:
+            graph.remove_edge(source, sink)
+
+        # At this point we should just have a list of logic cells to evaluate.
+        self.eval_order = list(nx.topological_sort(graph))
+        assert all(isinstance(node, LogicCell) for node in self.eval_order)
 
     def set_input(self, name, value):
         try:
-            port = self.design.inputs[name]
+            ports = self.inputs[name]
         except KeyError as exc:
             raise RuntimeError(f'No such input port "{name}"') from exc
         else:
-            for i, bit in enumerate(port):
+            for i, port in enumerate(ports):
                 bit_value = value & (1 << i)
-                self.net_states[bit] = bool(bit_value)
+                self.net_states[port] = bool(bit_value)
 
     def get_output(self, name):
         try:
-            port = self.design.outputs[name]
+            ports = self.outputs[name]
         except KeyError as exc:
             raise RuntimeError(f'No such output port "{name}"') from exc
         else:
+            port_sources = [self.node_sources[port][0] for port in ports]
             result = 0
-            for i, bit in enumerate(port):
-                bit_value = (bit == '1') if isinstance(bit, str) else int(self.net_states[bit])
-                result |= bit_value << i
+            for i, port in enumerate(ports):
+                result |= int(self.net_states[port_sources[i]]) << i
             return result
 
+    @property
+    def is_rising_clock_edge(self):
+        return self.current_clock_state and not self.last_clock_state
+
+    @property
+    def is_falling_clock_edge(self):
+        return self.last_clock_state and not self.current_clock_state
+
+    def _simulate_logic_cell(self, logic_cell):
+        # Simulate the LUT
+        input_sources = self.node_sources[logic_cell]
+        input_bits = [self.net_states[source] for source in input_sources]
+        bit_masks = [(1 << i if bit_set else 0) for i, bit_set in enumerate(input_bits)]
+        config_index = functools.reduce(operator.or_, bit_masks)
+        config_mask = 1 << config_index
+        lut_output = logic_cell.lut.config & config_mask != 0
+
+        # Simulate the flip flop and select an output.
+        # If the flip flop is selected then the output won't change until
+        # the simulation step is finished.
+        if logic_cell.ff is not None:
+            triggered = (
+                (logic_cell.ff.rising_edge_trigger and self.is_rising_clock_edge) or
+                (not logic_cell.ff.rising_edge_trigger and self.is_falling_clock_edge)
+            )
+            if triggered:
+                self.pending_flip_flop_updates[logic_cell] = lut_output
+        else:
+            self.net_states[logic_cell] = lut_output
+
     def eval(self):
+        self.current_clock_state = self.net_states[self.implementation.clock_input_port]
+
         clocked_bit_updates = {}
-        for node, attrs in self.eval_order:
-            if not attrs['is_module_port']:
-                driver = attrs['driver']
-                if attrs['clocked']:
-                    clocked_bit_updates[node] = driver.simulate(self.net_states, self.previous_net_states)
-                else:
-                    self.net_states[node] = driver.simulate(self.net_states)
+        for logic_cell in self.eval_order:
+            self._simulate_logic_cell(logic_cell)
 
         # Update all clocked elements (i.e. flip flops) simultaneously
         # at the end of the simulation step.
-        self.net_states.update(clocked_bit_updates)
+        self.net_states.update(self.pending_flip_flop_updates)
+        self.pending_flip_flop_updates.clear()
 
-        self.previous_net_states = dict(self.net_states)
+        self.last_clock_state = self.current_clock_state
 
 
 class MyDesignSimulator(Simulator):
@@ -490,15 +486,7 @@ def run(args):
         design = Design.load(f)
 
     implementation = Implementation(design)
-
-
-    for source, sink, attrs in implementation.graph.edges.data():
-        print('\n', source, '\n\t-> ', sink, '\n\t: ', attrs)
-
-
-    return
-
-    simulator = MyDesignSimulator(design)
+    simulator = MyDesignSimulator(implementation)
 
     for i in range(16):
         simulator.set_input('i_Reset', 1 if i == 4 else 0)
