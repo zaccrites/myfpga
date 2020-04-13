@@ -123,9 +123,6 @@ for i, logic_cell_input in enumerate(logic_cell_inputs):
     logic_cell_mux_selectors[name] = selector
 
 
-# If system is not satisfiable,
-# try removing the clauses which set inputs to "next unique ID"
-
 # Wire switch blocks together.
 solver.add(
     switch_blocks[0].north.input == next_unique_id(),  # I/O perimeter

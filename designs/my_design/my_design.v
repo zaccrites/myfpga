@@ -2,11 +2,19 @@
 module my_design (
     input i_Clock,
     input i_Reset,
-    output [3:0] o_Data
+    input i_Data,
+    output o_DataFF,
+    output o_DataPassthrough,
+    output o_DataOp
 );
 
 always @ (posedge i_Clock) begin
-    o_Data <= i_Reset ? 0 : (o_Data + 1);
+    o_DataFF <= i_Data;
+end
+
+always @* begin
+    o_DataPassthrough = i_Data;
+    o_DataOp = ~i_Data;
 end
 
 endmodule

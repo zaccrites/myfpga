@@ -1,7 +1,7 @@
 
 .PHONY: run
 run: my_design.json
-	python ../../implement_design.py my_design.json
+	myfpga my_design.json
 
 
 my_design.json: my_design.v my_design.ys
