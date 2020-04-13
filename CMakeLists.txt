@@ -30,5 +30,3 @@ set(COMMON_COMPILE_FLAGS
 
 add_subdirectory(simulator)
 add_subdirectory(hdl)
-
-add_subdirectory(minisat_interface)
