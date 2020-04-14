@@ -65,7 +65,8 @@ class LogicCell:
 
 @dataclass
 class IoBlock:
-    port: Int
+    input: Int
+    output: Int
     is_input: bool = True
 
 
@@ -95,8 +96,8 @@ class Router:
         yield from itertools.product(range(width), range(height))
 
     def _iter_io_block_coords(self):
-        width = self.device_config.width
-        height = self.device_config.height
+        width = self.device_config.width + 1
+        height = self.device_config.height + 1
         yield from itertools.product([Direction.north, Direction.south], range(width))
         yield from itertools.product([Direction.west, Direction.east], range(height))
 
@@ -178,8 +179,10 @@ class Router:
             self._add_logic_cell(x, y)
 
     def _add_io_block(self, direction, i):
+        name = f'io_{direction.name}[{i}]'
         self.io_blocks[(direction, i)] = IoBlock(
-            port=Int(f'io_{direction.name}[{i}]')
+            input=Int(f'{name}_input'),
+            output=Int(f'{name}_output'),
         )
 
     def _create_io_blocks(self):
@@ -238,11 +241,44 @@ class Router:
             southeast_switch_block.northwest_logic_cell_input == logic_cell.output,
         )
 
+    def _connect_io_block(self, direction, i):
+        io_block = self.io_blocks[(direction, i)]
+        if direction is Direction.north:
+            switch_block = self.switch_blocks[(i, 0)]
+            self.solver.add(
+                switch_block.north.output == io_block.input,
+                switch_block.north.input == io_block.output,
+            )
+
+        elif direction is Direction.south:
+            switch_block = self.switch_blocks[(i, self.device_config.height)]
+            self.solver.add(
+                switch_block.south.output == io_block.input,
+                switch_block.south.input == io_block.output,
+            )
+
+        elif direction is Direction.east:
+            switch_block = self.switch_blocks[(self.device_config.width, i)]
+            self.solver.add(
+                switch_block.east.output == io_block.input,
+                switch_block.east.input == io_block.output,
+            )
+
+        else:
+            assert direction is Direction.west
+            switch_block = self.switch_blocks[(0, i)]
+            self.solver.add(
+                switch_block.west.output == io_block.input,
+                switch_block.west.input == io_block.output,
+            )
+
     def _connect_all(self):
         for x, y in self._iter_switch_block_coords():
             self._connect_switch_blocks(x, y)
         for x, y in self._iter_logic_cell_coords():
             self._connect_logic_cells(x, y)
+        for direction, i in self._iter_io_block_coords():
+            self._connect_io_block(direction, i)
 
     def place_and_route(self):
         # The device "width" and "height" is the size of the grid in
@@ -284,7 +320,7 @@ class Router:
             if isinstance(source, LogicCell):
                 return source.output
             elif isinstance(source, IoBlock):
-                return source.port
+                return source.output
             else:
                 raise NotImplementedError(source)
 
@@ -292,7 +328,7 @@ class Router:
             if isinstance(sink, LogicCell):
                 return [input.input for input in sink.inputs]
             elif isinstance(sink, IoBlock):
-                return [sink.port]
+                return [sink.input]
             else:
                 raise NotImplementedError(sink)
 
@@ -362,11 +398,15 @@ class Router:
         else:
             model = self.solver.model()
 
+            model_variables = {}
+
             with open('model.txt', 'w') as f:
                 variables = sorted(model.decls(), key=lambda var: var.name())
                 for variable in variables:
                     value = model[variable]
                     line = f'{variable.name()} = {value}'
+
+                    model_variables[variable.name()] = value.as_long()
 
                     if any(filter_word in line for filter_word in line_filters):
                         print(line)
@@ -383,7 +423,177 @@ class Router:
 
 
 
+
+
+
+
+
+            # def _encode_var(var):
+            #     val = model[var]
+            #     return None if val is None else val.as_long()
+
+            # def _encode_port(port):
+            #     return {
+            #         'input': _encode_var(port.input),
+            #         'output': _encode_var(port.output),
+            #     }
+
+            # for (x, y), switch_block in self.switch_blocks.items():
+            #     all_info['switch_blocks'][f'{x},{y}'] = {
+            #         'north': _encode_port(switch_block.north),
+            #         'south': _encode_port(switch_block.south),
+            #         'east': _encode_port(switch_block.east),
+            #         'west': _encode_port(switch_block.west),
+
+            #         'northwest': _encode_var(switch_block.northwest_logic_cell_input),
+            #         'southwest': _encode_var(switch_block.southwest_logic_cell_input),
+            #         'northeast': _encode_var(switch_block.northeast_logic_cell_input),
+            #         'southeast': _encode_var(switch_block.southeast_logic_cell_input),
+            #     }
+
+            import json
+
+            all_info = {
+                'device_dims': {'width': self.device_config.width, 'height': self.device_config.height},
+                'variables': model_variables,
+                'module_ports': {
+                    f'{port.name}[{port.bit_index}]': {'direction': direction.name, 'index': i}
+                    for port, (direction, i) in module_port_locations.items()
+                },
+            }
+            # import pdb; pdb.set_trace();  # TODO: remove me
+            pass
+
+            with open('all_info.json', 'w') as f:
+                # json.dump(all_info, f, sort_keys=True, indent=4)
+                json.dump(all_info, f, sort_keys=True, indent=4)
+
+
+
+
         # TODO: Force clock input to a specific global clock port
 
 
+#
+#
         return None
+
+
+
+
+
+
+import jinja2
+from jinja2 import StrictUndefined, Environment, PackageLoader, select_autoescape
+
+
+class RoutingVisualization:
+
+    """Visualize routing as an SVG diagram."""
+
+    def __init__(self, router):
+        self.jinja_env = jinja2.Environment(
+            loader=jinja2.PackageLoader('myfpga', 'templates'),
+            autoescape=jinja2.select_unescape(enabled_extensions=['html']),
+            undefined=jinja2.StrictUndefined,
+        )
+
+
+        # # TODO: Clean this up. Just a quick prototype.
+
+        # @dataclass
+        # class Rectangle:
+        #     x: int
+        #     y: int
+        #     width: int
+        #     height: int
+        #     stroke: str
+        #     stroke_width: int
+        #     fill: str
+
+        # rectangles = []
+
+        # SWITCH_BLOCK_SIZE = 75
+        # LOGIC_CELL_SIZE = 50
+        # IO_BLOCK_SIZE = LOGIC_CELL_SIZE
+        # MARGIN = 20
+
+        # for x, y in self._iter_switch_block_coords():
+        #     rectangles.append(Rectangle(
+        #         x=(MARGIN + IO_BLOCK_SIZE + MARGIN + x * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)),
+        #         y=(MARGIN + IO_BLOCK_SIZE + MARGIN + y * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)),
+        #         width=SWITCH_BLOCK_SIZE,
+        #         height=SWITCH_BLOCK_SIZE,
+        #         stroke='red',
+        #         stroke_width=3,
+        #         fill='transparent',
+        #     ))
+
+        # for x, y in self._iter_logic_cell_coords():
+        #     rectangles.append(Rectangle(
+        #         x=(MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + x * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)),
+        #         y=(MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + y * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)),
+        #         width=LOGIC_CELL_SIZE,
+        #         height=LOGIC_CELL_SIZE,
+        #         stroke='black',
+        #         stroke_width=2,
+        #         fill='transparent',
+        #     ))
+
+        # for direction, i in self._iter_io_block_coords():
+        #     if direction is Direction.north:
+        #         y = MARGIN
+        #         x = MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + i * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)
+        #     elif direction is Direction.south:
+        #         y = MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + self.device_config.height * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)
+        #         x = MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + i * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)
+        #     elif direction is Direction.east:
+        #         y = MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + i * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)
+        #         x = MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + self.device_config.width * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)
+        #     else:
+        #         assert direction is Direction.west
+        #         y = MARGIN + IO_BLOCK_SIZE + MARGIN + SWITCH_BLOCK_SIZE + MARGIN + i * (SWITCH_BLOCK_SIZE + IO_BLOCK_SIZE + 2*MARGIN)
+        #         x = MARGIN
+        #     rectangles.append(Rectangle(
+        #         x=x,
+        #         y=y,
+        #         width=IO_BLOCK_SIZE,
+        #         height=IO_BLOCK_SIZE,
+        #         stroke='green',
+        #         stroke_width=1,
+        #         fill='transparent',
+        #     ))
+
+
+        # # logic_block_rects = []
+        # # for x, y in self._iter_logic_cell_coords():
+        # #     logic_block_rects.append((x, y))
+
+        # # io_block_rects = []
+        # # for direction, i in self._iter_io_block_coords():
+        # #     io_block_rects.append((direction, i))
+
+
+        # params = {
+        #     'rectangles': rectangles,
+        #     # 'switch_block_rects': switch_block_rects,
+        #     # 'logic_block_rects': logic_block_rects,
+        #     # 'io_block_rects': io_block_rects,
+        # }
+
+
+        # import pdb; pdb.set_trace();  # TODO: remove me
+        # pass
+
+        # # TODO: Use Jinja to generate a webpage with an interactive SVG
+        # # representation of the floorplan
+        # env = Environment(
+        #     loader=PackageLoader('myfpga', 'templates'),
+        #     autoescape=select_autoescape(enabled_extensions=['html']),
+        #     undefined=StrictUndefined,
+        # )
+        # template = env.get_template('svgtest.html')
+        # with open('svgtest.html', 'w') as f:
+        #     f.write(template.render(**params))
+
+

@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+    <title>SVG Test</title>
+    <style type="text/css">
+        html, body { padding: 0; margin: 0; }
+        svg {
+            border: 1px solid black;
+            margin: 48px;
+        }
+    </style>
+</head>
+<body>
+
+<svg width="800" height="800">
+
+{% for rect in rectangles %}
+<rect
+    x="{{ rect.x }}"
+    y="{{ rect.y }}"
+    width="{{ rect.width }}"
+    height="{{ rect.height }}"
+    stroke="{{ rect.stroke }}"
+    stroke-width="{{ rect.stroke_width }}"
+    fill="{{ rect.fill }}">
+</rect>
+{% endfor %}
+
+{# {% for x, y in switch_block_rects %}
+<rect
+    x="{{ 100 + x * 100 }}"
+    y="{{ 100 + y * 100 }}"
+    width="50"
+    height="50"
+    stroke="red"
+    stroke-width="2"
+    fill="transparent">
+</rect>
+{% endfor %}
+
+{% for x, y in logic_block_rects %}
+<rect
+    x="{{ 100 + x * 100 + 60 }}"
+    y="{{ 100 + y * 100 + 60 }}"
+    width="30"
+    height="30"
+    stroke="black"
+    stroke-width="3"
+    fill="transparent">
+</rect>
+{% endfor %}
+
+{% for x, y in io_block_rects %}
+
+{% endfor %} #}
+
+
+</svg>
+
+</body>
+</html>

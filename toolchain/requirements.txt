@@ -4,10 +4,14 @@ entrypoints==0.3
 flake8==3.7.9
 flake8-bugbear==20.1.4
 flake8-todo==0.7
+Jinja2==2.11.1
+MarkupSafe==1.1.1
 mccabe==0.6.1
 mpmath==1.1.0
+-e git+git@gitlab.com:zaccrites/myfpga.git@66533b6fc4abde9b5072f67abcdd61a766ce124a#egg=myfpga&subdirectory=toolchain
 networkx==2.4
 pkg-resources==0.0.0
 pycodestyle==2.5.0
 pyflakes==2.1.1
 sympy==1.5.1
+z3-solver==4.8.7.0
