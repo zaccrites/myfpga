@@ -133,10 +133,10 @@ class Implementation:
             return logic_cell
         elif isinstance(node, FlipFlop):
             # ... or with a passthrough LUT.
-            lut = LookUpTable(name='!passthrough_lut', config=0b10)
+            PASSTHROUGH_CONFIG = 0x1010101010101010  # assume port 0 for the connection
+            lut = LookUpTable(name='!passthrough_lut', config=PASSTHROUGH_CONFIG)
             logic_cell = LogicCell(lut=lut, ff=node)
             node_replacements[node] = logic_cell
-            # import pdb; pdb.set_trace();  # TODO: remove me
             return logic_cell
         elif isinstance(node, ModulePort):
             # At this point the design, all ports are outputs.

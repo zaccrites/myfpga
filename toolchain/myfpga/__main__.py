@@ -6,7 +6,7 @@ import argparse
 from myfpga.synthesis import Design
 from myfpga.implementation import Implementation
 from myfpga.simulation import Simulator
-from myfpga.routing import Router, DeviceConfig
+from myfpga.routing import DeviceTopology, route_design
 
 
 # Process:
@@ -46,9 +46,8 @@ def run(args):
     #     data = simulator.get_output('o_Data')
     #     print(f'Clock {i+1}: o_Data = {data}')
 
-    device_config = DeviceConfig(width=3, height=3)
-    router = Router(implementation, device_config)
-    routed_design = router.place_and_route()
+    device_topology = DeviceTopology(width=3, height=3)
+    routed_design = route_design(implementation, device_topology)
 
 
 def main():

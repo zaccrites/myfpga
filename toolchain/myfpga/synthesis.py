@@ -1,5 +1,6 @@
 """Synthesize and import a design."""
 
+import math
 import json
 from enum import Enum
 from typing import List
@@ -42,14 +43,8 @@ class LookUpTableConfig:
     def __post_init__(self):
         if len(self.input_bits) > 4:
             raise ValueError('LUT must have 4 or fewer inputs')
-
-        num_entries = 2 ** len(self.input_bits)
-        config_max_value = 2 ** num_entries - 1
-        if not (0 <= self.config <= config_max_value):
-            raise ValueError(
-                f'For a {len(self.input_bits)}-LUT, '
-                f'the configuration value must be at most 0x{config_max_value:x}'
-            )
+        if not (0 <= self.config <= 0xffff):
+            raise ValueError('LUT config must fit into 16 bits')
 
 
 @dataclass
@@ -58,6 +53,21 @@ class FlipFlopConfig:
     clock_bit: int
     data_input_bit: int
     output_bit: int
+
+
+def _decode_lut_config(raw_lut_string):
+    """Extend a LUT string to one suitable for a 4-LUT.
+
+    If the input has less than four inputs it will be too sort and must
+    be extended so that no matter what the other inputs are set to,
+    it won't affect the output for the bits that matter.
+
+    """
+    # We assume that the logic cell will use LUT inputs associated
+    # with the least significant bits first.
+    lut_string = raw_lut_string * (16 // len(raw_lut_string))
+    assert len(lut_string) == 16
+    return int(lut_string, 2)
 
 
 class Design:
@@ -99,7 +109,7 @@ class Design:
         name = f'$lut${raw_name.split("$")[-1]}'
         try:
             return name, LookUpTableConfig(
-                config=int(cell['parameters']['LUT'], 2),
+                config=_decode_lut_config(cell['parameters']['LUT']),
                 input_bits=cell['connections']['A'],
                 output_bit=cell['connections']['Y'][0],
             )
