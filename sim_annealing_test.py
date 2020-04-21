@@ -17,6 +17,7 @@ class MyAnnealer(Annealer):
 
     def move(self):
         initial_energy = self.energy()
+        print(initial_energy)
 
         if random.uniform(0, 1) > 0.5:
             self.state += 1

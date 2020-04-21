@@ -341,33 +341,219 @@ class IoBlockCoordinates:
 #     coords: IoBlockCoordinates
 
 
+import statistics
+from simanneal import Annealer
+
+
+
+
+
+
+
+# def route_design(implementation, topology):
+#     all_routes = []
+#     for seed in range(10):
+#         routes = _route_design(implementation, topology, seed)
+
+#         # We compute a score for the routing based on the median number of
+#         # nodes in each net of the netlist (lower is better).
+#         score = statistics.median(len(net) for net in routes.values())
+#         print(f'Seed {seed} earns score {score}')
+
+#         all_routes.append((score, seed, routes))
+
+#     all_routes.sort()
+
+#     worst_score, worst_seed, worst_routes = all_routes[-1]
+#     print(f'Worst Route: seed {worst_seed} earned {worst_score}')
+#     for source, route in worst_routes.items():
+#         print(source)
+#         print('-----------------------------------------------------')
+#         for x in route:
+#             print(x)
+#         print('-----------------------------------------------------\n')
+
+#     print('\n=======================================================\n')
+
+#     best_score, best_seed, best_routes = all_routes[0]
+#     print(f'Best Route: seed {best_seed} earned {best_score}')
+#     for source, route in best_routes.items():
+#         print(source)
+#         print('-----------------------------------------------------')
+#         for x in route:
+#             print(x)
+#         print('-----------------------------------------------------\n')
+
+import itertools
+import random
+from dataclasses import dataclass
+
+from myfpga.implementation import LogicCell, ModulePort
+
+
+@dataclass
+class AnnealerState:
+    logic_cell_coords: None
+    module_port_coords: None
+    # TODO: constraints
+
+
+class RoutingAnnealer(Annealer):
+
+    def __init__(self, router, state):
+        # TODO: Use different copying strategy?
+        self.router = router
+        self._current_routes = router._route(state)
+        super().__init__(state)
+
+    def set_user_exit(self, signum, frame):
+        # Oh sure, just set a global handler for SIGINT in the constructor
+        # of this function. Give me a break.
+        # https://github.com/perrygeo/simanneal/blob/6d6f43cdd767c642a0266448c5998c62158a7763/simanneal/anneal.py#L61
+        raise KeyboardInterrupt
+        # super().set_user_exit(signum, frame)
+
+    def update(self, *args, **kwargs):
+        # Overridden to avoid printing progress to stderr.
+        super().update(*args, **kwargs)
+        pass
+
+    def move(self):
+
+        # Swap two logic cell locations
+        start_energy = self.energy()
+        # print(f'moving: {start_energy}')
+
+        d = self.state.logic_cell_coords
+        location1, location2 = random.sample(list(d), 2)
+        d[location1], d[location2] = d[location2], d[location1]
+
+        # TODO: Sometimes swap IO blocks instead
+
+        self._current_routes = self.router._route(self.state)
+        return self.energy() - start_energy
+
+
+    def energy(self):
+        # TODO
+        return score_routes(self._current_routes)
+
+
+def score_routes(routes):
+    return statistics.median(len(net) for net in routes.values())
+
+
+class Router:
+
+    def __init__(self, implementation, topology):
+        self.implementation = implementation
+        self.topology = topology
+        self.network = self.topology.build_network()
+
+    def solve(self):
+        logic_cells = [node for node in self.implementation.graph if isinstance(node, LogicCell)]
+        all_logic_cell_coords = list(self.topology.iter_logic_cell_coords())
+        random.shuffle(all_logic_cell_coords)
+        logic_cell_coords = {
+            coords: logic_cell for coords, logic_cell
+            in itertools.zip_longest(all_logic_cell_coords, logic_cells)
+        }
+
+        module_ports = [node for node in self.implementation.graph if isinstance(node, ModulePort)]
+        all_io_block_coords = list(self.topology.iter_io_block_coords())
+        random.shuffle(all_io_block_coords)
+        module_port_coords = {
+            coords: module_port for coords, module_port
+            in itertools.zip_longest(all_io_block_coords, module_ports)
+        }
+
+        init_state = AnnealerState(
+            logic_cell_coords=logic_cell_coords,
+            module_port_coords=module_port_coords,
+        )
+
+        annealer = RoutingAnnealer(self, init_state)
+        print('Setting schedule')
+        annealer.set_schedule(annealer.auto(minutes=1, steps=100))  # ???
+        print('Annealing')
+        state, _energy = annealer.anneal()
+        print('final energy:', _energy)
+        return self._route(state)  # TODO: Just return last "_current_routes" from Annealer directly?
+
+    def _route(self, state):
+        # TODO: This seems weird
+        logic_cell_coords = {v: k for k, v in state.logic_cell_coords.items()}
+        module_port_coords = {v: k for k, v in state.module_port_coords.items()}
+
+        nets = {}
+        for source, sink, port in self.implementation.graph.edges.data('port'):
+            if port == 'clock':
+                continue
+
+            if isinstance(source, LogicCell):
+                source = logic_cell_coords[source].output
+            elif isinstance(source, ModulePort):
+                source = module_port_coords[source]
+            else:
+                raise NotImplementedError(source)
+
+            if isinstance(sink, LogicCell):
+                assert isinstance(port, int)
+                sink = logic_cell_coords[sink].input(port)
+            elif isinstance(sink, ModulePort):
+                sink = module_port_coords[sink]
+            else:
+                raise NotImplementedError(sink)
+
+            nets.setdefault(source, set()).add(sink)
+
+        return pathfinder.route(self.network, nets)
+
+
+
+
+
 
 def route_design(implementation, topology):
-    import random
-    random.seed(3)
+    try:
+        router = Router(implementation, topology)
+        routes = router.solve()
+    except KeyboardInterrupt:
+        print('Aborted')
+        return None
 
-    from myfpga.implementation import LogicCell, ModulePort
+    import pdb; pdb.set_trace();  # TODO: remove me
+    pass
+
+
+    random.seed(1234)
+
 
     logic_cells = [node for node in implementation.graph if isinstance(node, LogicCell)]
     all_logic_cell_coords = list(topology.iter_logic_cell_coords())
     random.shuffle(all_logic_cell_coords)
     logic_cell_coords = {
-        logic_cell: coords for logic_cell, coords
-        in zip(logic_cells, all_logic_cell_coords)
+        coords: logic_cell for coords, logic_cell
+        in itertools.zip_longest(all_logic_cell_coords, logic_cells)
     }
 
     module_ports = [node for node in implementation.graph if isinstance(node, ModulePort)]
     all_io_block_coords = list(topology.iter_io_block_coords())
     random.shuffle(all_io_block_coords)
     module_port_coords = {
-        module_port: coords for module_port, coords
-        in zip(module_ports, all_io_block_coords)
+        coords: module_port for coords, module_port
+        in itertools.zip_longest(all_io_block_coords, module_ports)
     }
+
+    # TODO
+    logic_cell_coords2 = {v: k for k, v in logic_cell_coords.items()}
+    module_port_coords2 = {v: k for k, v in module_port_coords.items()}
+
 
 
     network = topology.build_network()
 
-    route_graph = nx.DiGraph()
+    # route_graph = nx.DiGraph()
     nets = {}
 
     for source, sink, port in implementation.graph.edges.data('port'):
@@ -375,34 +561,47 @@ def route_design(implementation, topology):
             continue
 
         if isinstance(source, LogicCell):
-            source = logic_cell_coords[source].output
+            source = logic_cell_coords2[source].output
         elif isinstance(source, ModulePort):
-            source = module_port_coords[source]
+            source = module_port_coords2[source]
         else:
             raise NotImplementedError(source)
 
         if isinstance(sink, LogicCell):
             assert isinstance(port, int)
-            sink = logic_cell_coords[sink].input(port)
+            sink = logic_cell_coords2[sink].input(port)
         elif isinstance(sink, ModulePort):
-            sink = module_port_coords[sink]
+            sink = module_port_coords2[sink]
         else:
             raise NotImplementedError(sink)
 
-        route_graph.add_edge(source, sink)
-        print(source, f'--{port}-->', sink)
+        # route_graph.add_edge(source, sink)
+        # print(source, f'--{port}-->', sink)
 
         nets.setdefault(source, set()).add(sink)
 
+    state = AnnealerState(
+        logic_cell_coords=logic_cell_coords,
+        module_port_coords=module_port_coords,
+    )
 
-    routes = pathfinder.route(network, nets)
 
-    for source, route in routes.items():
-        print(source)
-        print('-----------------------------------------------------')
-        for x in route:
-            print(x)
-        print('-----------------------------------------------------\n')
+
+
+    import pdb; pdb.set_trace();  # TODO: remove me
+    pass
+
+    # routes = pathfinder.route(network, nets)
+
+
+    # return routes
+
+    # for source, route in routes.items():
+    #     print(source)
+    #     print('-----------------------------------------------------')
+    #     for x in route:
+    #         print(x)
+    #     print('-----------------------------------------------------\n')
 
 
 

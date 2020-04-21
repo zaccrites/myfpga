@@ -46,7 +46,7 @@ def run(args):
     #     data = simulator.get_output('o_Data')
     #     print(f'Clock {i+1}: o_Data = {data}')
 
-    device_topology = DeviceTopology(width=5, height=5)
+    device_topology = DeviceTopology(width=4, height=4)
     routed_design = route_design(implementation, device_topology)
 
 

@@ -18,5 +18,5 @@ which the myfpga simulation C++ launcher will load into the simulated FPGA.
 TODO
 
 ```
-apt install build-essential cmake ninja verilator yosys z3 graphviz
+apt install build-essential cmake ninja verilator yosys
 ```

@@ -58,6 +58,9 @@ def route(graph, nets):  # noqa: C901
     while shared_resources_exist:
         present_use_cost = {node: 1 for node in graph}
 
+        # TODO: Improve perfomrance by only re-routing signals which
+        # have shared resources.
+
         for source, sinks in nets.items():
             # We begin by looking at the source node.
             # For each sink connected to the source, we consider a "routing

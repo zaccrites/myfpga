@@ -181,16 +181,16 @@ for name, switch_block in routing_data['switch_blocks'].items():
         for i, input_value in enumerate(logic_cell['inputs']):
             port_name = f'{neighbor_name}:{"ABCD"[i]}'
             if direction == 'southwest':
-                if input_value == switch_block['sides']['north']['output']:
-                    g.edge(f'{name}_north_output', port_name)
-            elif direction == 'northeast':
                 if input_value == switch_block['sides']['west']['output']:
                     g.edge(f'{name}_west_output', port_name)
-            elif direction == 'northwest':
-                if input_value == switch_block['sides']['east']['output']:
-                    g.edge(f'{name}_east_output', port_name)
+            elif direction == 'southeast':
                 if input_value == switch_block['sides']['south']['output']:
                     g.edge(f'{name}_south_output', port_name)
+                if input_value == switch_block['sides']['east']['output']:
+                    g.edge(f'{name}_east_output', port_name)
+            elif direction == 'northeast':
+                if input_value == switch_block['sides']['north']['output']:
+                    g.edge(f'{name}_north_output', port_name)
 
         if switch_block['corners'][direction] == routing_data['logic_cells'][neighbor_name]['output']:
             g.edge(f'{neighbor_name}:Y', f'{name}_{direction}')
