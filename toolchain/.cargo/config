@@ -1,0 +1,4 @@
+
+[build]
+target-dir = "/home/zac/myfpga-toolchain-target"
+
