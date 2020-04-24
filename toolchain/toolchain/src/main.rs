@@ -1,7 +1,8 @@
 
+use petgraph::visit::EdgeRef;
 use petgraph::graph::{NodeIndex, DiGraph};
 // use petgraph::data::FromElements;
-use petgraph::algo::{dijkstra, astar};
+use petgraph::algo::astar;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 enum MyNode {
@@ -151,7 +152,6 @@ fn pathfinder(graph: &RoutingGraph, nets: &Netlist) -> Netlist {
                 let mut seen_nodes = HashSet::new();
 
                 loop {
-                    println!("Queue has {} items", queue.len());
 
                     // Look at the most promising (lowest cost) node in the queue.
                     let node = queue.pop().expect("Queue is empty!");
@@ -165,7 +165,7 @@ fn pathfinder(graph: &RoutingGraph, nets: &Netlist) -> Netlist {
                             graph,
                             *source,
                             |finish| finish == *sink,  // is goal node
-                            |edge| *edge.weight(),  // edge cost
+                            |edge| cost_function(edge.target()) + *edge.weight(),  // edge cost
                             |_| 0,  // estimate cost heuristic (TODO)
                         ).expect("Could not find path!");
 
@@ -186,7 +186,7 @@ fn pathfinder(graph: &RoutingGraph, nets: &Netlist) -> Netlist {
                         // They are added to the priority queue so that the next
                         // node we look at is the lowest cost potential path
                         // to the sink.
-                        let mut edges = graph.neighbors(*source).detach();
+                        let mut edges = graph.neighbors(node).detach();
                         while let Some((edge, neighbor)) = edges.next(&graph) {
                             if ! (queue.contains(neighbor) || seen_nodes.contains(&neighbor)) {
                                 let path_cost = graph[edge];
@@ -280,25 +280,28 @@ fn main() {
     let d3 = g.add_node(MyNode::Sink(3));
 
 
+    println!("s1 = {:?}", s1);
+    println!("s2 = {:?}", s2);
+    println!("s3 = {:?}", s3);
+    println!("a  = {:?}", a);
+    println!("b  = {:?}", b);
+    println!("c  = {:?}", c);
+    println!("d1  = {:?}", d1);
+    println!("d2  = {:?}", d2);
+    println!("d3  = {:?}", d3);
+
+
     g.add_edge(s1, a, 2);
     g.add_edge(s1, b, 1);
-
-    g.add_edge(s2, a, 3);
-    g.add_edge(s2, b, 1);
-    g.add_edge(s2, c, 4);
-
-    g.add_edge(s3, b, 1);
-    g.add_edge(s3, c, 3);
+    g.add_edge(s2, b, 2);
+    g.add_edge(s2, c, 1);
+    g.add_edge(s3, c, 1);
 
     g.add_edge(a, d1, 2);
-    g.add_edge(a, d2, 3);
-
     g.add_edge(b, d1, 1);
-    g.add_edge(b, d2, 1);
-    g.add_edge(b, d3, 1);
-
-    g.add_edge(c, d2, 4);
-    g.add_edge(c, d3, 3);
+    g.add_edge(b, d2, 2);
+    g.add_edge(c, d2, 1);
+    g.add_edge(c, d3, 1);
 
     // TODO: Get rid of this
     use std::iter::FromIterator;
@@ -307,9 +310,53 @@ fn main() {
     nets.insert(s2, HashSet::from_iter(vec![d2]));
     nets.insert(s3, HashSet::from_iter(vec![d3]));
 
-
     let result = pathfinder(&g, &nets);
     println!("{:?}", result);
+
+    /*
+    s1: [s1, d1, a]
+    s2: [s2, b, d2]
+    s3: [d3, c, s3]
+    */
+
+
+
+    // g.add_edge(s1, a, 2);
+    // g.add_edge(s1, b, 1);
+
+    // g.add_edge(s2, a, 3);
+    // g.add_edge(s2, b, 1);
+    // g.add_edge(s2, c, 4);
+
+    // g.add_edge(s3, b, 1);
+    // g.add_edge(s3, c, 3);
+
+    // g.add_edge(a, d1, 2);
+    // g.add_edge(a, d2, 3);
+
+    // g.add_edge(b, d1, 1);
+    // g.add_edge(b, d2, 1);
+    // g.add_edge(b, d3, 1);
+
+    // g.add_edge(c, d2, 4);
+    // g.add_edge(c, d3, 3);
+
+    // // TODO: Get rid of this
+    // use std::iter::FromIterator;
+    // let mut nets = Netlist::new();
+    // nets.insert(s1, HashSet::from_iter(vec![d1]));
+    // nets.insert(s2, HashSet::from_iter(vec![d2]));
+    // nets.insert(s3, HashSet::from_iter(vec![d3]));
+
+
+    // let result = pathfinder(&g, &nets);
+    // println!("{:?}", result);
+
+    // /*
+    // s1: [a, s1, d1]
+    // s2: [s2, d2, b]
+    // s3: [s3, c, d3]
+    // */
 
 
     // // let g = DiGraph::<i32, ()>::from_edges(&[
