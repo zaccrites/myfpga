@@ -3,7 +3,7 @@ mod routing;
 mod anneal;
 
 fn main() {
-    anneal::anneal();
+    anneal::anneal(8);
 
     // println!("Start: {:?}", start_elements);
     // println!("End:   {:?}", end_elements);
