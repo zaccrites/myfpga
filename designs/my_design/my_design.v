@@ -1,45 +1,46 @@
 
-module my_design (
-    input i_Clock,
-    input i_Reset,
-    input [3:0] i_Incr,
-    output [3:0] o_Data
-);
-
-reg [3:0] r_Data;
-
-always @ (posedge i_Clock) begin
-    if (i_Reset) begin
-        r_Data <= 0;
-    end
-    else begin
-        r_Data <= r_Data + i_Incr;
-    end
-end
-
-assign o_Data = r_Data;
-
-endmodule
-
 // module my_design (
 //     input i_Clock,
 //     input i_Reset,
-//     input i_Data,
-//     output o_DataFF,
-//     output o_DataPassthrough,
-//     output o_DataOp
+//     input [3:0] i_Incr,
+//     output [3:0] o_Data
 // );
 
+// reg [3:0] r_Data;
+
 // always @ (posedge i_Clock) begin
-//     o_DataFF <= i_Data;
+//     if (i_Reset) begin
+//         r_Data <= 0;
+//     end
+//     else begin
+//         r_Data <= r_Data + i_Incr;
+//     end
 // end
 
-// always @* begin
-//     o_DataPassthrough = i_Data;
-//     o_DataOp = ~i_Data;
-// end
+// assign o_Data = r_Data;
 
 // endmodule
+
+module my_design (
+    input i_Clock,
+    input i_Reset,
+    input i_Data,
+    output o_DataFF,
+    output o_DataPassthrough,
+    output o_DataOp
+);
+
+reg r_Data;
+assign o_DataFF = r_Data;
+
+always @ (posedge i_Clock) begin
+    r_Data <= i_Data;
+end
+
+assign o_DataPassthrough = i_Data;
+assign o_DataOp = ~i_Data;
+
+endmodule
 
 
 

@@ -29,6 +29,7 @@ impl Worker {
         self.job_sender.send(None).unwrap();
     }
 
+    // TODO: Use bounded sync_channel instead?
     fn new(state: Arc<RwLock<Vec<Point>>>, results_sender: mpsc::Sender<Option<WorkerResult>>) -> Self {
         let (job_sender, job_receiver) = mpsc::channel::<Option<JobData>>();
 

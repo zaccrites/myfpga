@@ -1,9 +1,31 @@
 
-mod routing;
-mod anneal;
+mod implementation;
+mod synthesis;
+
+// mod routing;
+// mod anneal;
+
+use std::fs;
+use serde_json;
+
 
 fn main() {
-    anneal::anneal(8);
+
+    let design_json_text = fs::read_to_string("/home/zac/Code/myfpga/designs/my_design/my_design.json").unwrap();
+    let design_json = serde_json::from_str(&design_json_text).unwrap();
+    let design = synthesis::Design::read(design_json);
+
+    println!("Design: \"{}\"", design.name);
+    println!("  Ports: \"{:?}\"", design.ports);
+    println!("  FFs:   \"{:?}\"", design.flip_flops);
+    println!("  LUTs:  \"{:?}\"", design.lookup_tables);
+
+
+
+
+
+
+    // anneal::anneal(8);
 
     // println!("Start: {:?}", start_elements);
     // println!("End:   {:?}", end_elements);
@@ -49,6 +71,7 @@ fn main() {
     // g.add_edge(c, d3, 1);
 
     // // TODO: Get rid of this
+    // use std::collections::HashSet;
     // use std::iter::FromIterator;
     // let mut nets = routing::Netlist::new();
     // nets.insert(s1, HashSet::from_iter(vec![d1]));
