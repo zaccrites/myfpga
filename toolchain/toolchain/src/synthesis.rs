@@ -84,8 +84,11 @@ impl LookUpTable {
 
         let output = NetId(cell["connections"]["Y"][0].as_u64().unwrap() as u32);
 
+        let id = name.split('$').last().unwrap();
+        let name = format!("$lut${}", id);
+
         Some(LookUpTable {
-            name: String::from(name),
+            name,
             config: LookUpTableConfig::decode(raw_config),
             inputs,
             output,
@@ -118,12 +121,18 @@ impl FlipFlop {
             _ => None,
         }?;
 
+        let id = name.split('$').last().unwrap();
+        let name = match trigger {
+            FlipFlopTrigger::RisingEdge => format!("$dff_pos${}", id),
+            FlipFlopTrigger::FallingEdge => format!("$dff_neg${}", id),
+        };
+
         let clock = NetId(cell["connections"]["C"][0].as_u64().unwrap() as u32);
         let data = NetId(cell["connections"]["D"][0].as_u64().unwrap() as u32);
         let output = NetId(cell["connections"]["Q"][0].as_u64().unwrap() as u32);
 
         Some(FlipFlop {
-            name: String::from(name),
+            name,
             trigger,
             clock,
             data,
