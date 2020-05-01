@@ -182,6 +182,16 @@ pub enum DesignGraphNode {
     ModulePort(ModulePort),
 }
 
+impl DesignGraphNode {
+    pub fn name(&self) -> String {
+        match self {
+            DesignGraphNode::LookUpTable(lut) => lut.name.clone(),
+            DesignGraphNode::FlipFlop(ff) => ff.name.clone(),
+            DesignGraphNode::ModulePort(port) => port.name.clone(),
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, Copy)]
 pub enum LookUpTableInput {
@@ -199,11 +209,6 @@ pub enum FlipFlopInput {
 }
 
 
-// The bit index of the module port
-#[derive(Debug, Clone, Copy)]
-pub struct ModulePortBitIndex(usize);
-
-
 #[derive(Debug, Clone, Copy)]
 pub enum DesignGraphEdge {
     LookUpTableInput(LookUpTableInput),
@@ -212,7 +217,7 @@ pub enum DesignGraphEdge {
 }
 
 impl DesignGraphEdge {
-    pub fn can_connect_to(self, node: &DesignGraphNode) -> bool {
+    fn can_connect_to(self, node: &DesignGraphNode) -> bool {
         match (self, node) {
             (DesignGraphEdge::LookUpTableInput(_), DesignGraphNode::LookUpTable(_)) => true,
             (DesignGraphEdge::FlipFlopInput(_), DesignGraphNode::FlipFlop(_)) => true,

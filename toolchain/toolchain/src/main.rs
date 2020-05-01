@@ -21,7 +21,10 @@ fn main() {
     println!("  FFs:   \"{:?}\"", design.flip_flops);
     println!("  LUTs:  \"{:?}\"", design.lookup_tables);
 
-    let design_impl = implementation::implement_design(design);
+    match implementation::implement_design(design) {
+        Ok(impl_graph) => println!("Implementation Graph:\n {:?}", impl_graph),
+        Err(impl_err) => println!("Implementation Error: {:?}", impl_err),
+    }
 
 
 
