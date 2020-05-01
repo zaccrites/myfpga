@@ -6,11 +6,12 @@ mod synthesis;
 // mod anneal;
 
 use std::fs;
-use serde_json;
 
 
 fn main() {
+    // TODO: argument parsing
 
+    // TODO: Pass std::io::Read to serde_json decoder directly
     let design_json_text = fs::read_to_string("/home/zac/Code/myfpga/designs/my_design/my_design.json").unwrap();
     let design_json = serde_json::from_str(&design_json_text).unwrap();
     let design = synthesis::Design::read(design_json);
@@ -20,6 +21,7 @@ fn main() {
     println!("  FFs:   \"{:?}\"", design.flip_flops);
     println!("  LUTs:  \"{:?}\"", design.lookup_tables);
 
+    let design_impl = implementation::implement_design(design);
 
 
 

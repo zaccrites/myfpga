@@ -1,5 +1,7 @@
 
-use serde_json;
+use std::collections::HashMap;
+
+use petgraph::graph::DiGraph;
 
 
 // Previous versions of Yosys emitted LUT configs as a binary string
@@ -8,6 +10,7 @@ enum YosysLutConfig<'a> {
     BinaryString(&'a str),
     Integer(u16, usize),
 }
+
 
 // A 4-LUT needs 16 configuration bits
 #[derive(Debug, Clone, Copy)]
@@ -23,12 +26,6 @@ impl LookUpTableConfig {
 
         let config_value = match raw_config {
             YosysLutConfig::BinaryString(raw_config) => {
-                // let num_config_bits = raw_config.len();
-                // let repeat_count = 16 / num_config_bits;
-                // let decoded = u16::from_str_radix(&raw_config, 2).expect("Yosys LUT config parse failed");
-                // let config = (1..repeat_count).fold(decoded, |acc, _| (acc << num_config_bits) | decoded);
-                // Self(config)
-
                 let width = raw_config.len();
                 let decoded = u16::from_str_radix(&raw_config, 2).unwrap();
                 expand_to_16_bits(decoded, width)
@@ -38,18 +35,13 @@ impl LookUpTableConfig {
         Self(config_value)
     }
 
-    pub fn get(&self) -> u16 {
+    pub fn get(self) -> u16 {
         self.0
     }
 }
 
 
-
-
-
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NetId(u32);
 
 
@@ -97,7 +89,7 @@ impl LookUpTable {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum FlipFlopTrigger {
     RisingEdge,
     FallingEdge,
@@ -142,9 +134,7 @@ impl FlipFlop {
 }
 
 
-
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ModulePortDirection {
     Input,
     Output,
@@ -154,31 +144,83 @@ pub enum ModulePortDirection {
 pub struct ModulePort {
     pub name: String,
     pub direction: ModulePortDirection,
-    pub bits: Vec<NetId>,
+    pub net: NetId,
 }
 
 impl ModulePort {
-    fn read(name: &str, port: &serde_json::Value) -> Self {
+    fn read(name: &str, port: &serde_json::Value) -> Vec<Self> {
         let direction = match port["direction"].as_str().unwrap() {
             "input" => ModulePortDirection::Input,
             "output" => ModulePortDirection::Output,
             direction => panic!("Unknown port direction '{}'", direction),
         };
-
-        let bits = port["bits"].as_array().unwrap().iter().map(|bit| NetId(bit.as_u64().unwrap() as u32)).collect();
-
-        ModulePort {
-            name: String::from(name),
-            bits,
-            direction,
-        }
+        let bits = port["bits"].as_array().unwrap();
+        bits.iter().enumerate().map(|(i, bit)| {
+            let name = if bits.len() == 1 {
+                String::from(name)
+            }
+            else {
+                format!("{}[{}]", name, i)
+            };
+            ModulePort {
+                name,
+                net: NetId(bit.as_u64().unwrap() as u32),
+                direction,
+            }
+        }).collect()
     }
-
-    // fn width(&self) -> usize {
-    //     self.bits.len()
-    // }
 }
 
+
+pub type DesignGraph = DiGraph<DesignGraphNode, DesignGraphEdge>;
+
+
+#[derive(Debug)]
+pub enum DesignGraphNode {
+    LookUpTable(LookUpTable),
+    FlipFlop(FlipFlop),
+    ModulePort(ModulePort),
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum LookUpTableInput {
+    A = 0,
+    B = 1,
+    C = 2,
+    D = 3,
+}
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum FlipFlopInput {
+    Clock,
+    Data,
+}
+
+
+// The bit index of the module port
+#[derive(Debug, Clone, Copy)]
+pub struct ModulePortBitIndex(usize);
+
+
+#[derive(Debug, Clone, Copy)]
+pub enum DesignGraphEdge {
+    LookUpTableInput(LookUpTableInput),
+    FlipFlopInput(FlipFlopInput),
+    ModulePortInput,
+}
+
+impl DesignGraphEdge {
+    pub fn can_connect_to(self, node: &DesignGraphNode) -> bool {
+        match (self, node) {
+            (DesignGraphEdge::LookUpTableInput(_), DesignGraphNode::LookUpTable(_)) => true,
+            (DesignGraphEdge::FlipFlopInput(_), DesignGraphNode::FlipFlop(_)) => true,
+            (DesignGraphEdge::ModulePortInput, DesignGraphNode::ModulePort(ModulePort{ direction: ModulePortDirection::Output, .. })) => true,
+            _ => false,
+        }
+    }
+}
 
 
 // TODO: Better interface than exposing these directly
@@ -190,12 +232,11 @@ pub struct Design {
 }
 
 impl Design {
-
     pub fn read(data: serde_json::Value) -> Self {
         let (module_name, module_data) = data["modules"].as_object().unwrap().iter().next().unwrap();
 
         let ports = module_data["ports"].as_object().unwrap().iter()
-            .map(|(name, port)| ModulePort::read(name, port)).collect();
+            .map(|(name, port)| ModulePort::read(name, port)).flatten().collect();
 
         let lookup_tables = module_data["cells"].as_object().unwrap().iter()
             .map(|(name, cell)| LookUpTable::try_read(name, cell)).flatten().collect();
@@ -206,14 +247,84 @@ impl Design {
         Self {
             name: String::from(module_name),
             ports,
-            flip_flops: flip_flops,
+            flip_flops,
             lookup_tables,
         }
-
     }
 
+    // TODO: Return Result<DesignGraph, SynthesisError> from here or read()
+    // Return Err instead of panicking if JSON read fails
+    pub fn into_graph(self) -> DesignGraph {
+        let mut graph = DesignGraph::new();
+        let mut net_sources = HashMap::new();
+        let mut net_sinks = HashMap::new();
 
+        for port in self.ports {
+            let net = port.net;
+            let direction = port.direction;
+            let node = graph.add_node(DesignGraphNode::ModulePort(port));
+            match direction {
+                ModulePortDirection::Input => {
+                    println!("[output] net = {:?}", net);
+                    assert!( ! net_sources.contains_key(&net));
+                    net_sources.insert(net, node);
+                },
+                ModulePortDirection::Output => {
+                    net_sinks.entry(net).or_insert_with(Vec::new).push((node, DesignGraphEdge::ModulePortInput));
+                }
+            }
+        }
 
+        for ff in self.flip_flops {
+            let data_net = ff.data;
+            let clock_net = ff.clock;
+            let output_net = ff.output;
+            let node = graph.add_node(DesignGraphNode::FlipFlop(ff));
+
+            net_sinks.entry(clock_net).or_insert_with(Vec::new).push((node, DesignGraphEdge::FlipFlopInput(FlipFlopInput::Clock)));
+            net_sinks.entry(data_net).or_insert_with(Vec::new).push((node, DesignGraphEdge::FlipFlopInput(FlipFlopInput::Data)));
+
+            assert!( ! net_sources.contains_key(&output_net));
+            net_sources.insert(output_net, node);
+        }
+
+        for lut in self.lookup_tables {
+            let input_nets = lut.inputs;
+            let output_net = lut.output;
+            let node = graph.add_node(DesignGraphNode::LookUpTable(lut));
+
+            for input in &[LookUpTableInput::A, LookUpTableInput::B, LookUpTableInput::C, LookUpTableInput::D] {
+                if let Some(input_net) = input_nets[*input as usize] {
+                    let sinks = net_sinks.entry(input_net).or_insert_with(Vec::new);
+                    sinks.push((node, DesignGraphEdge::LookUpTableInput(*input)));
+                }
+            }
+
+            assert!( ! net_sources.contains_key(&output_net));
+            net_sources.insert(output_net, node);
+        }
+
+        for (source_net, source_node) in &net_sources {
+            if let Some(sink_nodes_and_edges) = net_sinks.get(source_net) {
+                for (sink_node, edge) in sink_nodes_and_edges {
+                    graph.add_edge(*source_node, *sink_node, *edge);
+                }
+            }
+        }
+
+        // Verify that the generated edges are correct for the node
+        // they connect to.
+        // FUTURE: Can I use the type system to make the compiler
+        //   do this check for me? I don't know that I can with a
+        //   graph library expecting homogenous node types and
+        //   arbitrary weight types.
+        for edge in graph.raw_edges() {
+            let target = &graph[edge.target()];
+            assert!(edge.weight.can_connect_to(target));
+        }
+
+        graph
+    }
 }
 
 
@@ -241,6 +352,3 @@ mod tests {
         assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b0, 1)).get(), 0x0000);
     }
 }
-
-
-
