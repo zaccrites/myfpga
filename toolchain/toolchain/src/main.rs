@@ -17,11 +17,13 @@ fn main() {
     let design = synthesis::Design::read(design_json);
 
     println!("Design: \"{}\"", design.name);
-    println!("  Ports: \"{:?}\"", design.ports);
-    println!("  FFs:   \"{:?}\"", design.flip_flops);
-    println!("  LUTs:  \"{:?}\"", design.lookup_tables);
+    let design_graph = design.into_graph();
 
-    match implementation::implement_design(design) {
+    // println!("  Ports: \"{:?}\"", design.ports);
+    // println!("  FFs:   \"{:?}\"", design.flip_flops);
+    // println!("  LUTs:  \"{:?}\"", design.lookup_tables);
+
+    match implementation::implement_design(design_graph) {
         Ok(impl_graph) => println!("Implementation Graph:\n {:?}", impl_graph),
         Err(impl_err) => println!("Implementation Error: {:?}", impl_err),
     }

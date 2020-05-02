@@ -4,35 +4,41 @@ use std::collections::HashMap;
 use petgraph::graph::DiGraph;
 
 
-// Previous versions of Yosys emitted LUT configs as a binary string
-// of ones and zeroes. At some point it changed to emitting a plain integer.
-enum YosysLutConfig<'a> {
-    BinaryString(&'a str),
+// Previous versions of Yosys emitted LUT masks as strings ones and zeroes.
+// At some point it changed to emitting plain integers.
+#[derive(Debug, Clone, Copy)]
+enum YosysLutMask<'a> {
+    BitString(&'a str),
     Integer(u16, usize),
 }
 
-
-// A 4-LUT needs 16 configuration bits
-#[derive(Debug, Clone, Copy)]
-pub struct LookUpTableConfig(u16);
-
-impl LookUpTableConfig {
-    /// Decode a raw Yosys LUT configuration string
-    fn decode(raw_config: YosysLutConfig) -> Self {
+impl<'a> YosysLutMask<'a> {
+    fn decode(self) -> LookUpTableMask {
         fn expand_to_16_bits(raw_value: u16, width: usize) -> u16 {
             let repeat_count = 16 / width;
             (1..repeat_count).fold(raw_value, |acc, _| (acc << width) | raw_value)
         }
 
-        let config_value = match raw_config {
-            YosysLutConfig::BinaryString(raw_config) => {
+        let config_value = match self {
+            Self::BitString(raw_config) => {
                 let width = raw_config.len();
                 let decoded = u16::from_str_radix(&raw_config, 2).unwrap();
                 expand_to_16_bits(decoded, width)
             },
-            YosysLutConfig::Integer(raw_config, width) => expand_to_16_bits(raw_config, width),
+            Self::Integer(raw_config, width) => expand_to_16_bits(raw_config, width),
         };
-        Self(config_value)
+        LookUpTableMask::new(config_value)
+    }
+}
+
+
+// A 4-LUT needs 16 configuration bits
+#[derive(Debug, Clone, Copy)]
+pub struct LookUpTableMask(u16);
+
+impl LookUpTableMask {
+    pub fn new(mask: u16) -> Self {
+        Self(mask)
     }
 
     pub fn get(self) -> u16 {
@@ -42,30 +48,30 @@ impl LookUpTableConfig {
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NetId(u32);
+struct NetId(u32);
 
 
 #[derive(Debug)]
-pub struct LookUpTable {
-    pub name: String,
-    pub config: LookUpTableConfig,
-    pub inputs: [Option<NetId>; 4],
-    pub output: NetId,
+struct LookUpTableConfig {
+    name: String,
+    mask: LookUpTableMask,
+    inputs: [Option<NetId>; 4],
+    output: NetId,
 }
 
-impl LookUpTable {
+impl LookUpTableConfig {
     fn try_read(name: &str, cell: &serde_json::Value) -> Option<Self> {
         // TODO: Error handling
         if cell["type"].as_str().unwrap() != "$lut" {
             return None;
         }
 
-        let raw_config = match &cell["parameters"]["LUT"] {
+        let mask = match &cell["parameters"]["LUT"] {
             serde_json::Value::Number(value) => {
                 let width = cell["parameters"]["WIDTH"].as_u64().unwrap() as usize;
-                YosysLutConfig::Integer(value.as_u64().unwrap() as u16, width)
+                YosysLutMask::Integer(value.as_u64().unwrap() as u16, width).decode()
             },
-            serde_json::Value::String(value) => YosysLutConfig::BinaryString(&value),
+            serde_json::Value::String(value) => YosysLutMask::BitString(&value).decode(),
             _ => panic!(),
         };
 
@@ -79,9 +85,9 @@ impl LookUpTable {
         let id = name.split('$').last().unwrap();
         let name = format!("$lut${}", id);
 
-        Some(LookUpTable {
+        Some(Self {
             name,
-            config: LookUpTableConfig::decode(raw_config),
+            mask,
             inputs,
             output,
         })
@@ -97,15 +103,15 @@ pub enum FlipFlopTrigger {
 
 
 #[derive(Debug)]
-pub struct FlipFlop {
-    pub name: String,
-    pub trigger: FlipFlopTrigger,
-    pub clock: NetId,
-    pub data: NetId,
-    pub output: NetId,
+struct FlipFlopConfig {
+    name: String,
+    trigger: FlipFlopTrigger,
+    clock: NetId,
+    data: NetId,
+    output: NetId,
 }
 
-impl FlipFlop {
+impl FlipFlopConfig {
     fn try_read(name: &str, cell: &serde_json::Value) -> Option<Self> {
         let trigger = match cell["type"].as_str().unwrap() {
             "$_DFF_P_" => Some(FlipFlopTrigger::RisingEdge),
@@ -123,7 +129,7 @@ impl FlipFlop {
         let data = NetId(cell["connections"]["D"][0].as_u64().unwrap() as u32);
         let output = NetId(cell["connections"]["Q"][0].as_u64().unwrap() as u32);
 
-        Some(FlipFlop {
+        Some(Self {
             name,
             trigger,
             clock,
@@ -141,13 +147,13 @@ pub enum ModulePortDirection {
 }
 
 #[derive(Debug)]
-pub struct ModulePort {
-    pub name: String,
-    pub direction: ModulePortDirection,
-    pub net: NetId,
+struct ModulePortConfig {
+    name: String,
+    direction: ModulePortDirection,
+    net: NetId,
 }
 
-impl ModulePort {
+impl ModulePortConfig {
     fn read(name: &str, port: &serde_json::Value) -> Vec<Self> {
         let direction = match port["direction"].as_str().unwrap() {
             "input" => ModulePortDirection::Input,
@@ -162,7 +168,7 @@ impl ModulePort {
             else {
                 format!("{}[{}]", name, i)
             };
-            ModulePort {
+            Self {
                 name,
                 net: NetId(bit.as_u64().unwrap() as u32),
                 direction,
@@ -170,6 +176,56 @@ impl ModulePort {
         }).collect()
     }
 }
+
+
+
+#[derive(Debug, Clone)]
+pub struct ModulePort {
+    pub name: String,
+    pub direction: ModulePortDirection,
+}
+
+impl From<ModulePortConfig> for ModulePort {
+    fn from(config: ModulePortConfig) -> Self {
+        Self {
+            name: config.name,
+            direction: config.direction,
+        }
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct FlipFlop {
+    pub name: String,
+    pub trigger: FlipFlopTrigger,
+}
+
+impl From<FlipFlopConfig> for FlipFlop {
+    fn from(config: FlipFlopConfig) -> Self {
+        Self {
+            name: config.name,
+            trigger: config.trigger,
+        }
+    }
+}
+
+
+#[derive(Debug, Clone)]
+pub struct LookUpTable {
+    pub name: String,
+    pub mask: LookUpTableMask,
+}
+
+impl From<LookUpTableConfig> for LookUpTable {
+    fn from(config: LookUpTableConfig) -> Self {
+        Self {
+            name: config.name,
+            mask: config.mask,
+        }
+    }
+}
+
 
 
 pub type DesignGraph = DiGraph<DesignGraphNode, DesignGraphEdge>;
@@ -195,10 +251,16 @@ impl DesignGraphNode {
 
 #[derive(Debug, Clone, Copy)]
 pub enum LookUpTableInput {
-    A = 0,
-    B = 1,
-    C = 2,
-    D = 3,
+    A,
+    B,
+    C,
+    D,
+}
+
+impl LookUpTableInput {
+    fn iter() -> impl Iterator<Item=Self> {
+        [Self::A, Self::B, Self::C, Self::D].iter().copied()
+    }
 }
 
 
@@ -231,9 +293,9 @@ impl DesignGraphEdge {
 // TODO: Better interface than exposing these directly
 pub struct Design {
     pub name: String,
-    pub ports: Vec<ModulePort>,
-    pub flip_flops: Vec<FlipFlop>,
-    pub lookup_tables: Vec<LookUpTable>,
+    ports: Vec<ModulePortConfig>,
+    flip_flops: Vec<FlipFlopConfig>,
+    lookup_tables: Vec<LookUpTableConfig>,
 }
 
 impl Design {
@@ -241,13 +303,13 @@ impl Design {
         let (module_name, module_data) = data["modules"].as_object().unwrap().iter().next().unwrap();
 
         let ports = module_data["ports"].as_object().unwrap().iter()
-            .map(|(name, port)| ModulePort::read(name, port)).flatten().collect();
+            .map(|(name, port)| ModulePortConfig::read(name, port)).flatten().collect();
 
         let lookup_tables = module_data["cells"].as_object().unwrap().iter()
-            .map(|(name, cell)| LookUpTable::try_read(name, cell)).flatten().collect();
+            .map(|(name, cell)| LookUpTableConfig::try_read(name, cell)).flatten().collect();
 
         let flip_flops = module_data["cells"].as_object().unwrap().iter()
-            .map(|(name, cell)| FlipFlop::try_read(name, cell)).flatten().collect();
+            .map(|(name, cell)| FlipFlopConfig::try_read(name, cell)).flatten().collect();
 
         Self {
             name: String::from(module_name),
@@ -264,13 +326,12 @@ impl Design {
         let mut net_sources = HashMap::new();
         let mut net_sinks = HashMap::new();
 
-        for port in self.ports {
-            let net = port.net;
-            let direction = port.direction;
-            let node = graph.add_node(DesignGraphNode::ModulePort(port));
+        for port_config in self.ports {
+            let net = port_config.net;
+            let direction = port_config.direction;
+            let node = graph.add_node(DesignGraphNode::ModulePort(port_config.into()));
             match direction {
                 ModulePortDirection::Input => {
-                    println!("[output] net = {:?}", net);
                     assert!( ! net_sources.contains_key(&net));
                     net_sources.insert(net, node);
                 },
@@ -280,11 +341,11 @@ impl Design {
             }
         }
 
-        for ff in self.flip_flops {
-            let data_net = ff.data;
-            let clock_net = ff.clock;
-            let output_net = ff.output;
-            let node = graph.add_node(DesignGraphNode::FlipFlop(ff));
+        for ff_config in self.flip_flops {
+            let data_net = ff_config.data;
+            let clock_net = ff_config.clock;
+            let output_net = ff_config.output;
+            let node = graph.add_node(DesignGraphNode::FlipFlop(ff_config.into()));
 
             net_sinks.entry(clock_net).or_insert_with(Vec::new).push((node, DesignGraphEdge::FlipFlopInput(FlipFlopInput::Clock)));
             net_sinks.entry(data_net).or_insert_with(Vec::new).push((node, DesignGraphEdge::FlipFlopInput(FlipFlopInput::Data)));
@@ -293,15 +354,15 @@ impl Design {
             net_sources.insert(output_net, node);
         }
 
-        for lut in self.lookup_tables {
-            let input_nets = lut.inputs;
-            let output_net = lut.output;
-            let node = graph.add_node(DesignGraphNode::LookUpTable(lut));
+        for lut_config in self.lookup_tables {
+            let input_nets = lut_config.inputs;
+            let output_net = lut_config.output;
+            let node = graph.add_node(DesignGraphNode::LookUpTable(lut_config.into()));
 
-            for input in &[LookUpTableInput::A, LookUpTableInput::B, LookUpTableInput::C, LookUpTableInput::D] {
-                if let Some(input_net) = input_nets[*input as usize] {
+            for (i, input) in LookUpTableInput::iter().enumerate() {
+                if let Some(input_net) = input_nets[i] {
                     let sinks = net_sinks.entry(input_net).or_insert_with(Vec::new);
-                    sinks.push((node, DesignGraphEdge::LookUpTableInput(*input)));
+                    sinks.push((node, DesignGraphEdge::LookUpTableInput(input)));
                 }
             }
 
@@ -327,7 +388,6 @@ impl Design {
             let target = &graph[edge.target()];
             assert!(edge.weight.can_connect_to(target));
         }
-
         graph
     }
 }
@@ -341,19 +401,19 @@ mod tests {
     // https://docs.serde.rs/serde_json/macro.json.html
 
     #[test]
-    fn lut_config_decode() {
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::BinaryString("1111000011110000")).get(), 0xf0f0);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::BinaryString("11110000")).get(), 0xf0f0);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::BinaryString("1100")).get(), 0xcccc);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::BinaryString("10")).get(), 0xaaaa);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::BinaryString("1")).get(), 0xffff);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::BinaryString("0")).get(), 0x0000);
+    fn yosys_lut_mask_decode() {
+        assert_eq!((YosysLutMask::BitString("1111000011110000")).decode().get(), 0xf0f0);
+        assert_eq!((YosysLutMask::BitString("11110000")).decode().get(), 0xf0f0);
+        assert_eq!((YosysLutMask::BitString("1100")).decode().get(), 0xcccc);
+        assert_eq!((YosysLutMask::BitString("10")).decode().get(), 0xaaaa);
+        assert_eq!((YosysLutMask::BitString("1")).decode().get(), 0xffff);
+        assert_eq!((YosysLutMask::BitString("0")).decode().get(), 0x0000);
 
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b1111000011110000, 16)).get(), 0xf0f0);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b11110000, 8)).get(), 0xf0f0);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b1100, 4)).get(), 0xcccc);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b10, 2)).get(), 0xaaaa);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b1, 1)).get(), 0xffff);
-        assert_eq!(LookUpTableConfig::decode(YosysLutConfig::Integer(0b0, 1)).get(), 0x0000);
+        assert_eq!((YosysLutMask::Integer(0b1111000011110000, 16)).decode().get(), 0xf0f0);
+        assert_eq!((YosysLutMask::Integer(0b11110000, 8)).decode().get(), 0xf0f0);
+        assert_eq!((YosysLutMask::Integer(0b1100, 4)).decode().get(), 0xcccc);
+        assert_eq!((YosysLutMask::Integer(0b10, 2)).decode().get(), 0xaaaa);
+        assert_eq!((YosysLutMask::Integer(0b1, 1)).decode().get(), 0xffff);
+        assert_eq!((YosysLutMask::Integer(0b0, 1)).decode().get(), 0x0000);
     }
 }
