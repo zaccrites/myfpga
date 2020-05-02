@@ -45,7 +45,7 @@ pub enum ImplError {
     /// A flip flop is clocked from a non-module input port.
     FlipFlopClockSource { ff: String, clock_source: String },
     /// Flip flops are clocked from multiple domains.
-    MultipleClockDomains { expected_clock_source: String, actual_clock_source: String },
+    MultipleClockDomains { ff: String, expected_clock_source: String, actual_clock_source: String },
 }
 
 
@@ -81,6 +81,7 @@ fn sanity_check_flip_flops(design_graph: &DesignGraph) -> Result<(), ImplError> 
                 if let Some((main_clock_port, main_clock_port_id)) = main_clock_port {
                     if port_index != main_clock_port_id {
                         return Err(ImplError::MultipleClockDomains {
+                            ff: ff.name.clone(),
                             expected_clock_source: main_clock_port.name.clone(),
                             actual_clock_source: source.name(),
                         });

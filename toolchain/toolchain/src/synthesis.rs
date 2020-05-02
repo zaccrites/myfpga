@@ -154,26 +154,27 @@ struct ModulePortConfig {
 }
 
 impl ModulePortConfig {
-    fn read(name: &str, port: &serde_json::Value) -> Vec<Self> {
+    fn read(name: &str, port: &serde_json::Value) -> Result<Vec<Self>, SynthesisError> {
         let direction = match port["direction"].as_str().unwrap() {
             "input" => ModulePortDirection::Input,
             "output" => ModulePortDirection::Output,
             direction => panic!("Unknown port direction '{}'", direction),
         };
         let bits = port["bits"].as_array().unwrap();
-        bits.iter().enumerate().map(|(i, bit)| {
+
+
+        let mut ports = Vec::new();
+        for (i, bit) in bits.iter().enumerate() {
             let name = if bits.len() == 1 {
                 String::from(name)
             }
             else {
                 format!("{}[{}]", name, i)
             };
-            Self {
-                name,
-                net: NetId(bit.as_u64().unwrap() as u32),
-                direction,
-            }
-        }).collect()
+            let net = NetId(bit.as_u64().ok_or_else(|| SynthesisError::ModulePortUndriven {port: name.clone()})? as u32);
+            ports.push(Self { name, net, direction });
+        }
+        Ok(ports)
     }
 }
 
@@ -226,6 +227,10 @@ impl From<LookUpTableConfig> for LookUpTable {
     }
 }
 
+
+pub enum SynthesisError {
+    ModulePortUndriven { port: String },
+}
 
 
 pub type DesignGraph = DiGraph<DesignGraphNode, DesignGraphEdge>;
@@ -299,11 +304,13 @@ pub struct Design {
 }
 
 impl Design {
-    pub fn read(data: serde_json::Value) -> Self {
+    pub fn read(data: serde_json::Value) -> Result<Self, SynthesisError> {
         let (module_name, module_data) = data["modules"].as_object().unwrap().iter().next().unwrap();
 
-        let ports = module_data["ports"].as_object().unwrap().iter()
-            .map(|(name, port)| ModulePortConfig::read(name, port)).flatten().collect();
+        let mut ports = Vec::new();
+        for (name, port) in module_data["ports"].as_object().unwrap().iter() {
+            ports.extend(ModulePortConfig::read(name, port)?);
+        }
 
         let lookup_tables = module_data["cells"].as_object().unwrap().iter()
             .map(|(name, cell)| LookUpTableConfig::try_read(name, cell)).flatten().collect();
@@ -311,17 +318,17 @@ impl Design {
         let flip_flops = module_data["cells"].as_object().unwrap().iter()
             .map(|(name, cell)| FlipFlopConfig::try_read(name, cell)).flatten().collect();
 
-        Self {
+        Ok(Self {
             name: String::from(module_name),
             ports,
             flip_flops,
             lookup_tables,
-        }
+        })
     }
 
     // TODO: Return Result<DesignGraph, SynthesisError> from here or read()
     // Return Err instead of panicking if JSON read fails
-    pub fn into_graph(self) -> DesignGraph {
+    pub fn into_graph(self) -> Result<DesignGraph, SynthesisError> {
         let mut graph = DesignGraph::new();
         let mut net_sources = HashMap::new();
         let mut net_sinks = HashMap::new();
@@ -388,7 +395,7 @@ impl Design {
             let target = &graph[edge.target()];
             assert!(edge.weight.can_connect_to(target));
         }
-        graph
+        Ok(graph)
     }
 }
 
