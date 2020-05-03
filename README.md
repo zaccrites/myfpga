@@ -1,9 +1,9 @@
 
 # myfpga
 
-A DIY FPGA Architecture
+A work-in-progress DIY FPGA Architecture
 
-The FPGA is implemented in SystemVerilog and simulated using a Verilator
+The FPGA will be implemented in SystemVerilog and simulated using a Verilator
 model linked against a C++ launcher.
 
 Designs meant to run on myfpga within the simulation are written in Verilog-2005
@@ -15,7 +15,10 @@ which the myfpga simulation C++ launcher will load into the simulated FPGA.
 
 ## Development
 
-TODO
+The main toolchain is implemented in Rust and can be
+[installed via rustup](https://www.rust-lang.org/learn/get-started).
+Some supplementary tools are also required to build the simulator
+and to do target design synthesis.
 
 ```
 apt install build-essential cmake ninja-build verilator yosys
