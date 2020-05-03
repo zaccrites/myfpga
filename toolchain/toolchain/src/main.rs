@@ -2,7 +2,7 @@
 mod implementation;
 mod synthesis;
 
-// mod routing;
+mod routing;
 // mod anneal;
 
 
@@ -10,7 +10,7 @@ mod synthesis;
 enum ToolchainError {
     SynthesisError(String),
     ImplementationError(String),
-    // RoutingError,
+    RoutingError(String),
 }
 
 impl ToolchainError {
@@ -18,13 +18,15 @@ impl ToolchainError {
         match self {
             Self::SynthesisError(msg) => msg,
             Self::ImplementationError(msg) => msg,
+            Self::RoutingError(msg) => msg,
         }
     }
 
-    fn phase(&self) -> &str {
+    fn phase(&self) -> &'static str {
         match self {
             Self::SynthesisError(_) => "Synthesis",
             Self::ImplementationError(_) => "Implementation",
+            Self::RoutingError(_) => "Routing",
         }
     }
 }
@@ -51,6 +53,12 @@ impl From<implementation::ImplError> for ToolchainError {
     }
 }
 
+impl From<routing::RoutingError> for ToolchainError {
+    fn from(err: routing::RoutingError) -> Self {
+        ToolchainError::RoutingError(format!("TODO: {:?}", err))
+    }
+}
+
 
 fn run() -> Result<(), ToolchainError> {
     // TODO: Pass std::io::Read to serde_json decoder directly
@@ -62,7 +70,12 @@ fn run() -> Result<(), ToolchainError> {
     let design_graph = design.into_graph()?;
     let impl_graph = implementation::implement_design(design_graph)?;
 
-    println!("{:?}", impl_graph);
+    // println!("{:?}", impl_graph);
+
+    let topology = routing::DeviceTopology {width:2 , height: 2};
+    let routing_config = routing::route_design(impl_graph, topology)?;
+
+    println!("{:?}", routing_config);
 
     Ok(())
 }

@@ -1,244 +1,430 @@
 
-use std::cmp::Reverse;
-use std::cmp::Ordering;
+use itertools::iproduct;
+use petgraph::graphmap::DiGraphMap;
 
-use petgraph::visit::EdgeRef;
-use petgraph::graph::{NodeIndex, DiGraph};
-// use petgraph::data::FromElements;
-use petgraph::algo::astar;
-
-
-use std::collections::BinaryHeap;
-use std::cell::RefCell;
+use crate::synthesis::LookUpTableInput;
+use crate::implementation::{
+    ImplGraph,
+};
 
 
 
-use std::collections::HashMap;
-use std::collections::HashSet;
-
-
-// use std::iter::Map;
-
-pub type RoutingGraph = DiGraph<MyNode, i32>;
-// type Netlist = HashMap<MyNode, Vec<MyNode>>;  // Iterator instead of Vec?
-pub type Netlist = HashMap<NodeIndex, HashSet<NodeIndex>>;
-
-
-
-
-
-
-#[derive(Debug, Eq)]
-struct PriorityQueueEntry(i32, usize, NodeIndex);
-
-impl PartialEq for PriorityQueueEntry {
-    fn eq(&self, other: &Self) -> bool {
-        (self.0, self.1) == (other.0, other.1)
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum CardinalDirection {
+    North,
+    South,
+    West,
+    East,
 }
 
-impl PartialOrd for PriorityQueueEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+impl CardinalDirection {
+    const VALUES: [Self; 4] = [Self::North, Self::South, Self::West, Self::East];
 
-impl Ord for PriorityQueueEntry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (self.0, self.1).cmp(&(other.0, other.1))
-    }
-}
-
-
-struct PriorityQueue {
-    heap: BinaryHeap<Reverse<PriorityQueueEntry>>,
-    counter: usize,
-}
-
-impl PriorityQueue {
-    pub fn new() -> PriorityQueue {
-        PriorityQueue {
-            heap: BinaryHeap::new(),
-            counter: 0,
+    fn opposite(self) -> Self {
+        match self {
+            Self::North => Self::South,
+            Self::South => Self::North,
+            Self::West => Self::East,
+            Self::East => Self::West,
         }
     }
 
-    pub fn push(&mut self, node: NodeIndex, priority: i32) {
-        let entry = PriorityQueueEntry(priority, self.counter, node);
-        self.heap.push(Reverse(entry));
-        self.counter += 1;
-    }
-
-    pub fn pop(&mut self) -> Option<NodeIndex> {
-        if let Some(Reverse(entry)) = self.heap.pop() {
-            Some(entry.2)
+    fn name(self) -> &'static str {
+        match self {
+            Self::North => "north",
+            Self::South => "south",
+            Self::West => "west",
+            Self::East => "east",
         }
-        else {
-            None
-        }
-    }
-
-    pub fn contains(&self, node: NodeIndex) -> bool {
-        // TODO: Use a HashSet to keep the current items instead?
-        self.heap.iter().any(|Reverse(entry)| entry.2 == node)
-    }
-
-}
-
-
-use std::iter::FromIterator;
-
-impl FromIterator<NodeIndex> for PriorityQueue {
-    fn from_iter<I>(iter: I) -> Self
-        where I: IntoIterator<Item=NodeIndex>
-    {
-        let mut queue = PriorityQueue::new();
-        for item in iter {
-            let priority = 0;
-            queue.push(item, priority);
-        }
-        queue
     }
 }
 
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+enum IntercardinalDirection {
+    Northwest,
+    Northeast,
+    Southwest,
+    Southeast,
+}
 
+impl IntercardinalDirection {
+    const VALUES: [Self; 4] = [Self::Northwest, Self::Northeast, Self::Southwest, Self::Southeast];
 
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub enum MyNode {
-    Source(i32),
-    Sink(i32),
-    Switch(i32),
+    fn opposite(self) -> Self {
+        match self {
+            Self::Northwest => Self::Southeast,
+            Self::Northeast => Self::Southwest,
+            Self::Southwest => Self::Northeast,
+            Self::Southeast => Self::Southeast,
+        }
+    }
 }
 
 
+type RoutingGraph = DiGraphMap<RoutingGraphNode, RoutingGraphEdge>;
 
-// "nets" is the desired net connectivity
-pub fn pathfinder(graph: &RoutingGraph, nets: &Netlist) -> Netlist {
+// Each switch block side has an input and output with multiple channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum SwitchBlockChannel {
+    A,
+    B,
+    C,
+    D,
+}
 
-    // Instead of a hash map of costs, can we store them on the node weight
-    // objects themselves?
-    // Alternatively, store the NodeIndex objects in the hashmap instead.
+impl SwitchBlockChannel {
+    const VALUES: [Self; 4] = [Self::A, Self::B, Self::C, Self::D];
 
-    // TODO: May not have to initialize the hash maps if I use the entry API
-    // to fill in the default values.
-    let historical_use_cost: RefCell<HashMap<_, _>> = RefCell::new(graph.node_indices().map(|node| (node, 0)).collect());
-
-    // TODO: Any way to avoid using RefCell here? Cell?
-    // Consider moving inside the loop.
-    let present_use_cost: RefCell<HashMap<_, _>> = RefCell::new(graph.node_indices().map(|node| (node, 1)).collect());
-
-    let cost_function = |node| {
-        let base_cost = 1;
-        (base_cost + historical_use_cost.borrow().get(&node).unwrap()) * present_use_cost.borrow().get(&node).unwrap()
-    };
+    // Use additional cost for other channels to encourage the algorithm
+    // to reuse a channel when it can.
+    fn cost(self) -> i32 {
+        match self {
+            Self::A => 1,
+            Self::B => 2,
+            Self::C => 3,
+            Self::D => 4,
+        }
+    }
+}
 
 
-    let mut routes = HashMap::new();
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum RoutingGraphNode {
+    SwitchBlockInput(SwitchBlockPort),
+    SwitchBlockOutput(SwitchBlockPort),
+    SwitchBlockCorner(SwitchBlockCorner),
+    LogicCellInput {coords: LogicCellCoordinates, input: LookUpTableInput},
+    LogicCellOutput {coords: LogicCellCoordinates},
+    IoBlock {coords: IoBlockCoordinates},
+}
 
-    // TODO: Rewrite as idiomatic Rust
-    let mut shared_resources_exist = true;
-    while shared_resources_exist {
-        present_use_cost.replace(graph.node_indices().map(|node| (node, 1)).collect());
+impl RoutingGraphNode {
+    fn can_connect_to(self, other_node: Self) -> bool {
+        // This only checks that the types of connections are right, not that
+        // e.g. the nodes are actually adjacent.
+        match (self, other_node) {
+            (Self::LogicCellOutput {..}, Self::SwitchBlockCorner(_)) => true,
+            (Self::SwitchBlockCorner(_), Self::SwitchBlockOutput(_)) => true,
+            (Self::SwitchBlockInput(_), Self::SwitchBlockOutput(_)) => true,
+            (Self::SwitchBlockOutput(_), Self::SwitchBlockInput(_)) => true,
+            (Self::SwitchBlockOutput(_), Self::LogicCellInput {..}) => true,
+            (Self::SwitchBlockOutput(_), Self::IoBlock {..}) => true,
+            (Self::IoBlock {..}, Self::SwitchBlockInput {..}) => true,
+            _ => false,
+        }
+    }
+}
 
-        // TODO: Improve performance by only re-routing signals which
-        // have shared resources.
 
-        for (source, sinks) in nets {
-            // We begin by looking at the source node.
-            // For each sink connected to the source, we consider a "routing
-            // tree" (which is really just a set) of nodes in the net connecting
-            // the source and sinks.
-            let mut routing_tree = HashSet::new();
-            routing_tree.insert(*source);
+// Cost of using the resource
+type RoutingGraphEdge = i32;
 
-            for sink in sinks {
-                // We have to find a way to connect each sink to the routing tree.
-                // let mut queue = PriorityQueue::new();
-                // for node in routing_tree.iter() {
-                //     queue.push(*node, 0);
-                // }
-                let mut queue: PriorityQueue = routing_tree.iter().copied().collect();
 
-                let mut seen_nodes = HashSet::new();
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+struct SwitchBlockPort {
+    coords: SwitchBlockCoordinates,
+    side: CardinalDirection,
+    channel: SwitchBlockChannel,
+}
 
-                loop {
 
-                    // Look at the most promising (lowest cost) node in the queue.
-                    let node = queue.pop().expect("Queue is empty!");
-                    seen_nodes.insert(node);
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+struct SwitchBlockCorner {
+    coords: SwitchBlockCoordinates,
+    direction: IntercardinalDirection,
+}
 
-                    // If the node is the sink we're looking for,
-                    // we trace back the path to the source and add each node
-                    // to the routing tree.
-                    if node == *sink {
-                        let (_path_cost, path_nodes) = astar(
-                            graph,
-                            *source,
-                            |finish| finish == *sink,  // is goal node
-                            |edge| cost_function(edge.target()) + *edge.weight(),  // edge cost
-                            |_| 0,  // estimate cost heuristic (TODO)
-                        ).expect("Could not find path!");
 
-                        // Don't include the source or sink in the added path nodes
-                        let path_nodes_len = path_nodes.len() - 2;
-                        for path_node in path_nodes.into_iter().skip(1).take(path_nodes_len) {
-                            routing_tree.insert(path_node);
-                        }
-                        break
-                    }
-                    else {
-                        // TODO: Consider storing costs on the nodes directly
-                        // instead of in hash maps?
-                        // https://docs.rs/petgraph/0.4.5/petgraph/graph/struct.WalkNeighbors.html
+#[derive(Debug)]
+pub struct DeviceTopology {
+    pub width: usize,
+    pub height: usize,
+}
 
-                        // If it's not the sink we're looking for,
-                        // then we add each node that this node can connect to.
-                        // They are added to the priority queue so that the next
-                        // node we look at is the lowest cost potential path
-                        // to the sink.
-                        let mut edges = graph.neighbors(node).detach();
-                        while let Some((edge, neighbor)) = edges.next(&graph) {
-                            if ! (queue.contains(neighbor) || seen_nodes.contains(&neighbor)) {
-                                let path_cost = graph[edge];
-                                let priority = cost_function(node) + path_cost;
-                                queue.push(neighbor, priority);
-                            }
-                        }
+impl DeviceTopology {
+
+    fn build_graph(&self) -> RoutingGraph {
+        let mut graph = RoutingGraph::new();
+
+        for switch_block_coords in self.iter_switch_block_coords() {
+            // Internal to the switch block, all inputs are connected to
+            // all outputs on other sides (i.e. all north-side inputs
+            // are connected to all outputs on south, west, and east sides only).
+
+            // TODO: DRY
+            let inputs = iproduct!(CardinalDirection::VALUES.iter().copied(), SwitchBlockChannel::VALUES.iter().copied())
+                .map(|(side, channel)| SwitchBlockPort {coords: switch_block_coords, side, channel});
+            let outputs = iproduct!(CardinalDirection::VALUES.iter().copied(), SwitchBlockChannel::VALUES.iter().copied())
+                .map(|(side, channel)| SwitchBlockPort {coords: switch_block_coords, side, channel});
+            let connected_ports = iproduct!(inputs, outputs).filter(|(input, output)| input.side != output.side);
+            for (input_port, output_port) in connected_ports {
+                // Internal to the switch block, an input will be directed
+                // to an output via a mux.
+                let input = RoutingGraphNode::SwitchBlockInput(input_port);
+                let output = RoutingGraphNode::SwitchBlockOutput(output_port);
+                graph.add_edge(input, output, output_port.channel.cost());
+            }
+
+            let corners = IntercardinalDirection::VALUES.iter().copied()
+                .map(|direction| RoutingGraphNode::SwitchBlockCorner(SwitchBlockCorner {coords: switch_block_coords, direction }));
+            let outputs = iproduct!(CardinalDirection::VALUES.iter().copied(), SwitchBlockChannel::VALUES.iter().copied())
+                .map(|(side, channel)| SwitchBlockPort {coords: switch_block_coords, side, channel});
+            for (corner, output_port) in iproduct!(corners, outputs) {
+                let output = RoutingGraphNode::SwitchBlockOutput(output_port);
+                graph.add_edge(corner, output, output_port.channel.cost());
+            }
+
+            for (direction, other_switch_block_coords) in self.adjacent_switch_blocks(switch_block_coords) {
+                // Only add the outgoing side, since the other switch block
+                // will add its output back to this block once its turn in the
+                // outer loop comes up.
+                let outputs = SwitchBlockChannel::VALUES.iter().copied()
+                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel: channel});
+                let inputs = SwitchBlockChannel::VALUES.iter().copied()
+                    .map(|channel| SwitchBlockPort {coords: other_switch_block_coords, side: direction.opposite(), channel: channel});
+                for (output_port, input_port) in outputs.zip(inputs) {
+                    // External to the switch block, an output will always
+                    // drive another's input.
+                    let output = RoutingGraphNode::SwitchBlockOutput(output_port);
+                    let input = RoutingGraphNode::SwitchBlockInput(input_port);
+                    graph.add_edge(output, input, output_port.channel.cost());
+                }
+            }
+
+            for (direction, logic_cell_coords) in self.adjacent_logic_cells(switch_block_coords) {
+                // A logic cell connects to all four switch blocks
+                // at its corners (not pictured in diagram below).
+                let corner = RoutingGraphNode::SwitchBlockCorner(SwitchBlockCorner {coords: switch_block_coords, direction});
+                let logic_cell_output = RoutingGraphNode::LogicCellOutput {coords: logic_cell_coords};
+                graph.add_edge(logic_cell_output, corner, 1);
+
+                // TODO: Can probably extract things like this to methods on the coords struct
+                let logic_cell_inputs = LookUpTableInput::VALUES.iter().copied()
+                    .map(|input| RoutingGraphNode::LogicCellInput {coords: logic_cell_coords, input});
+                for logic_cell_input in logic_cell_inputs {
+                    /*
+                        +-----+                +-----+
+                        | NW  | -----x-------> | NE  |
+                        | Blk | <--x-|-------- | Blk |
+                        +-----+    | |         +-----+
+                          ^ |      | |  *--*     ^ |
+                          | |      | +--|LC|     | |
+                          | |      +----|  |     | |
+                          | x-----------|  |     | |
+                          x-------------|  |     | |
+                          | V           *--*     | V
+                        +-----+                +-----+
+                        | SW  | -------------> | SE  |
+                        | Blk | <------------- | Blk |
+                        +-----+                +-----+
+
+                        Note that the pictured connections can connect to
+                        any of the logic cell's inputs. E.g. the eastbound
+                        signal is not restricted to LUT Input A, it can connect
+                        to B, C, and D as well.
+                    */
+                    match direction {
+                        // TODO: DRY
+                        IntercardinalDirection::Northeast => SwitchBlockChannel::VALUES.iter().copied()
+                            .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::North, channel})
+                            .for_each(|output| {graph.add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost());}),
+
+                        IntercardinalDirection::Southwest => SwitchBlockChannel::VALUES.iter().copied()
+                            .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::West, channel})
+                            .for_each(|output| {graph.add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost());}),
+
+                        IntercardinalDirection::Southeast =>
+                            (
+                                SwitchBlockChannel::VALUES.iter().copied()
+                                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::South, channel})
+                            ).chain(
+                                SwitchBlockChannel::VALUES.iter().copied()
+                                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::East, channel})
+                            )
+                            .for_each(|output| {graph.add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost());}),
+
+                        IntercardinalDirection::Northwest => {
+                            // Switch blocks cannot connect to the inputs
+                            // of logic cells to their northwest.
+                        },
                     }
                 }
             }
 
-            // Increment present use cost
-            for node in &routing_tree {
-                present_use_cost.borrow_mut().entry(*node).and_modify(|value| *value += 1);
+            for (direction, io_block_coords) in self.adjacent_io_blocks(switch_block_coords) {
+                let inputs = SwitchBlockChannel::VALUES.iter().copied()
+                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel});
+                for input_port in inputs {
+                    let input = RoutingGraphNode::SwitchBlockInput(input_port);
+                    graph.add_edge(RoutingGraphNode::IoBlock {coords: io_block_coords}, input, input_port.channel.cost());
+                }
+
+                let outputs = SwitchBlockChannel::VALUES.iter().copied()
+                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel});
+                for output_port in outputs {
+                    let output = RoutingGraphNode::SwitchBlockOutput(output_port);
+                    graph.add_edge(output, RoutingGraphNode::IoBlock {coords: io_block_coords}, output_port.channel.cost());
+                }
             }
-
-            routes.insert(*source, routing_tree);
-
         }
 
-        // The starting value is 1, and is increased by 1 for each user of the resource.
-        //  present_use_cost = 1 : unused
-        //  present_use_cost = 2 : exclusively used by one net
-        //  present_use_cost > 2 : shared by multiple nets
-        shared_resources_exist = present_use_cost.borrow().values().any(|value| *value > 2);
-
-        // Increase the historical use cost for all used nodes by the amount used.
-        for (k, v) in present_use_cost.borrow().iter() {
-            historical_use_cost.borrow_mut().entry(*k).and_modify(|value| *value += v);
+        for (source, target, _edge) in graph.all_edges() {
+            assert!(
+                source.can_connect_to(target),
+                "Cannot connect {:?} to {:?}", source, target,
+            );
         }
-
+        graph
     }
 
-    // Finally, add the source and sinks to the routing tree to form
-    // a completely routed net list.
-    let mut result = HashMap::new();
-    for (source, nodes) in routes.into_iter() {
-        let mut all_nets = nodes;
-        all_nets.extend(nets.get(&source).unwrap());
-        all_nets.insert(source);
-        result.insert(source, all_nets);
+    // TODO: Implement these as custom iterators instead
+    fn adjacent_io_blocks(&self, coords: SwitchBlockCoordinates) -> Vec<(CardinalDirection, IoBlockCoordinates)> {
+        let mut results = Vec::new();
+        if coords.y == 0 {
+            let direction = CardinalDirection::North;
+            results.push((direction, IoBlockCoordinates {direction, position: coords.x}));
+        }
+        if coords.y == self.height {
+            let direction = CardinalDirection::South;
+            results.push((direction, IoBlockCoordinates {direction, position: coords.x}));
+        }
+        if coords.x == 0 {
+            let direction = CardinalDirection::West;
+            results.push((direction, IoBlockCoordinates {direction, position: coords.y}));
+        }
+        if coords.x == self.width {
+            let direction = CardinalDirection::East;
+            results.push((direction, IoBlockCoordinates {direction, position: coords.y}));
+        }
+        results
     }
-    result
+
+    // FUTURE: Implement in terms of applying a direction to an (x, y) point.
+    // If the point goes outsides the bounds, return None. IntercardinalDirections
+    // are then pairs of CardinalDirections, though this would likely be need to be
+    // implemented as positive and negative directions along vertical and horizontal
+    // axes instead of four separate directions.
+    fn adjacent_logic_cells(&self, coords: SwitchBlockCoordinates) -> Vec<(IntercardinalDirection, LogicCellCoordinates)> {
+        let mut results = Vec::new();
+        if coords.y > 0 && coords.x > 0 {
+            results.push((IntercardinalDirection::Northwest, LogicCellCoordinates {x: coords.x - 1, y: coords.y - 1}));
+        }
+        if coords.y > 0 && coords.x < self.width {
+            results.push((IntercardinalDirection::Northeast, LogicCellCoordinates {x: coords.x, y: coords.y - 1}));
+        }
+        if coords.y < self.height && coords.x > 0 {
+            results.push((IntercardinalDirection::Southwest, LogicCellCoordinates {x: coords.x - 1, y: coords.y}));
+        }
+        if coords.y < self.height && coords.x < self.width {
+            results.push((IntercardinalDirection::Southeast, LogicCellCoordinates {x: coords.x, y: coords.y}));
+        }
+        results
+    }
+
+    fn adjacent_switch_blocks(&self, coords: SwitchBlockCoordinates) -> Vec<(CardinalDirection, SwitchBlockCoordinates)> {
+        let mut results = Vec::new();
+        if coords.y > 0 {
+            results.push((CardinalDirection::North, SwitchBlockCoordinates {x: coords.x, y: coords.y - 1}));
+        }
+        if coords.y < self.height {
+            results.push((CardinalDirection::South, SwitchBlockCoordinates {x: coords.x, y: coords.y + 1}));
+        }
+        if coords.x > 0 {
+            results.push((CardinalDirection::West, SwitchBlockCoordinates {x: coords.x - 1, y: coords.y}));
+        }
+        if coords.x < self.width {
+            results.push((CardinalDirection::West, SwitchBlockCoordinates {x: coords.x + 1, y: coords.y}));
+        }
+        results
+    }
+
+    fn iter_switch_block_coords(&self) -> impl Iterator<Item=SwitchBlockCoordinates> {
+        iproduct!(0..self.width+1, 0..self.height+1).map(|(x, y)| SwitchBlockCoordinates {x, y})
+    }
+
+    fn iter_logic_cell_coords(&self) -> impl Iterator<Item=LogicCellCoordinates> {
+        iproduct!(0..self.width, 0..self.height).map(|(x, y)| LogicCellCoordinates {x, y})
+    }
+
+    fn iter_io_block_coords(&self) -> impl Iterator<Item=IoBlockCoordinates> {
+        let north = (0..self.width+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::North, position: i });
+        let south = (0..self.width+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::South, position: i });
+        let west = (0..self.height+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::West, position: i });
+        let east = (0..self.height+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::East, position: i });
+        north.chain(south).chain(west).chain(east)
+    }
+
+}
+
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+struct LogicCellCoordinates {
+    x: usize,
+    y: usize,
+}
+
+impl LogicCellCoordinates {
+    fn name(self) -> String {
+        format!("$cell[{},{}]", self.x, self.y)
+    }
+}
+
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+struct SwitchBlockCoordinates {
+    x: usize,
+    y: usize,
+}
+
+impl SwitchBlockCoordinates {
+    fn name(self) -> String {
+        format!("$junction[{},{}]", self.x, self.y)
+    }
+}
+
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
+struct IoBlockCoordinates {
+    direction: CardinalDirection,
+    position: usize,
+}
+
+impl IoBlockCoordinates {
+    fn name(self) -> String {
+        format!("$io_{}[{}]", self.direction.name(), self.position)
+    }
+}
+
+
+#[derive(Debug)]
+pub enum RoutingError {
+
+}
+
+
+#[derive(Debug)]
+pub struct RoutingConfiguration {
+
+}
+
+pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<RoutingConfiguration, RoutingError> {
+
+    let graph = topology.build_graph();
+    // println!("{:?}", graph);
+
+    // Create neat visualization with "sfdp -x -Goverlap=scale -Tpdf /tmp/test.dot > test.pdf"
+    // TODO: Use Display instead of Debug for nicer output labels
+    use std::io::Write;
+    use petgraph::dot::{Dot, Config};
+    let mut f = std::fs::File::create("/tmp/test.dot").unwrap();
+    let output = format!("{:?}", Dot::with_config(&graph, &[Config::EdgeNoLabel]));
+    f.write_all(&output.as_bytes()).unwrap();
+
+
+    let config = RoutingConfiguration {};
+
+
+
+    Ok(config)
 }

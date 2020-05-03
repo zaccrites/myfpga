@@ -254,7 +254,7 @@ impl DesignGraphNode {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub enum LookUpTableInput {
     A,
     B,
@@ -263,9 +263,7 @@ pub enum LookUpTableInput {
 }
 
 impl LookUpTableInput {
-    fn iter() -> impl Iterator<Item=Self> {
-        [Self::A, Self::B, Self::C, Self::D].iter().copied()
-    }
+    pub const VALUES: [Self; 4] = [Self::A, Self::B, Self::C, Self::D];
 }
 
 
@@ -366,7 +364,7 @@ impl Design {
             let output_net = lut_config.output;
             let node = graph.add_node(DesignGraphNode::LookUpTable(lut_config.into()));
 
-            for (i, input) in LookUpTableInput::iter().enumerate() {
+            for (i, input) in LookUpTableInput::VALUES.iter().copied().enumerate() {
                 if let Some(input_net) = input_nets[i] {
                     let sinks = net_sinks.entry(input_net).or_insert_with(Vec::new);
                     sinks.push((node, DesignGraphEdge::LookUpTableInput(input)));
