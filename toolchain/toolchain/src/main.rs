@@ -33,8 +33,9 @@ impl ToolchainError {
 
 impl From<synthesis::SynthesisError> for ToolchainError {
     fn from (err: synthesis::SynthesisError) -> Self {
+        use synthesis::SynthesisError::*;
         let message = match err {
-            synthesis::SynthesisError::ModulePortUndriven {port} =>
+            ModulePortUndriven {port} =>
                 format!("Module port \"{}\" is undriven", port),
         };
         ToolchainError::SynthesisError(message)
@@ -43,10 +44,11 @@ impl From<synthesis::SynthesisError> for ToolchainError {
 
 impl From<implementation::ImplError> for ToolchainError {
     fn from(err: implementation::ImplError) -> Self {
+        use implementation::ImplError::*;
         let message = match err {
-            implementation::ImplError::FlipFlopClockSource {ff, clock_source} =>
+            FlipFlopClockSource {ff, clock_source} =>
                 format!("\"{}\" clocked from non-module-input \"{}\"", ff, clock_source),
-            implementation::ImplError::MultipleClockDomains {ff, expected_clock_source, actual_clock_source} =>
+            MultipleClockDomains {ff, expected_clock_source, actual_clock_source} =>
                 format!("\"{}\" should be clocked by main clock source \"{}\", not by \"{}\"", ff, expected_clock_source, actual_clock_source),
         };
         ToolchainError::ImplementationError(message)
@@ -55,7 +57,14 @@ impl From<implementation::ImplError> for ToolchainError {
 
 impl From<routing::RoutingError> for ToolchainError {
     fn from(err: routing::RoutingError) -> Self {
-        ToolchainError::RoutingError(format!("TODO: {:?}", err))
+        use routing::RoutingError::*;
+        let message = match err {
+            NotEnoughLogicCells {needed, available} =>
+                format!("Need {} logic cells, but there are only {} available", needed, available),
+            NotEnoughIoBlocks {needed, available} =>
+                format!("Need {} I/O blocks, but there are only {} available", needed, available),
+        };
+        ToolchainError::RoutingError(message)
     }
 }
 
@@ -72,7 +81,7 @@ fn run() -> Result<(), ToolchainError> {
 
     // println!("{:?}", impl_graph);
 
-    let topology = routing::DeviceTopology {width:2 , height: 2};
+    let topology = routing::DeviceTopology {width: 3, height: 3};
     let routing_config = routing::route_design(impl_graph, topology)?;
 
     println!("{:?}", routing_config);
@@ -84,8 +93,11 @@ fn run() -> Result<(), ToolchainError> {
 fn main() {
     // TODO: argument parsing
 
-    if let Err(err) = run() {
-        eprintln!("{} failed: {}", err.phase(), err.message());
-        std::process::exit(1);
-    }
+    std::process::exit(match run() {
+        Ok(_) => 0,
+        Err(err) => {
+            eprintln!("{} failed: {}", err.phase(), err.message());
+            1
+        },
+    });
 }

@@ -399,32 +399,91 @@ impl IoBlockCoordinates {
 
 #[derive(Debug)]
 pub enum RoutingError {
-
+    NotEnoughLogicCells {needed: usize, available: usize},
+    NotEnoughIoBlocks {needed: usize, available: usize},
 }
 
 
 #[derive(Debug)]
 pub struct RoutingConfiguration {
-
 }
 
+
+use rand::prelude::*;
+
+use std::collections::HashMap;
+
+use crate::implementation::{
+    ImplGraphNode, ImplGraphEdge,
+};
+
 pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<RoutingConfiguration, RoutingError> {
+    let mut rng = rand::thread_rng();
+
+    let logic_cell_indices: Vec<_> = impl_graph.node_indices().filter_map(|node| match &impl_graph[node] {
+        ImplGraphNode::LogicCell(_) => Some(node),
+        _ => None,
+    }).collect();
+    let logic_cells_required = logic_cell_indices.len();
+    let mut logic_cell_coords = topology.iter_logic_cell_coords().choose_multiple(&mut rng, logic_cell_indices.len());
+    logic_cell_coords.shuffle(&mut rng);
+    let logic_cell_coords: HashMap<_, _> = logic_cell_indices.into_iter().zip(logic_cell_coords).collect();
+
+    if logic_cell_coords.len() < logic_cells_required {
+        return Err(RoutingError::NotEnoughLogicCells {
+            needed: logic_cells_required,
+            available: logic_cell_coords.len(),
+        });
+    }
+
+    // FUTURE: Support I/O constraints
+    let module_port_indices: Vec<_> = impl_graph.node_indices().filter_map(|node| match &impl_graph[node] {
+        ImplGraphNode::ModulePort(_) => Some(node),
+        _ => None,
+    }).collect();
+    let io_blocks_required = module_port_indices.len();
+    let mut io_block_coords = topology.iter_io_block_coords().choose_multiple(&mut rng, module_port_indices.len());
+    io_block_coords.shuffle(&mut rng);
+    let module_port_coords: HashMap<_, _> = module_port_indices.into_iter().zip(io_block_coords).collect();
+
+    if module_port_coords.len() < io_blocks_required {
+        // FUTURE: Handle this "plus one for clock" and other clock-related
+        // handling better.
+        return Err(RoutingError::NotEnoughIoBlocks {
+            needed: io_blocks_required + 1,  // Plus one for the clock input
+            available: module_port_coords.len(),
+        });
+    }
+
+    let mut nets = HashMap::new();
+    for impl_edge in impl_graph.raw_edges() {
+        let impl_source_id = impl_edge.source();
+        let impl_source = &impl_graph[impl_source_id];
+        let impl_sink_id = impl_edge.target();
+        let impl_sink = &impl_graph[impl_sink_id];
+
+        let routing_source = match impl_source {
+            ImplGraphNode::LogicCell(_) => RoutingGraphNode::LogicCellOutput {coords: logic_cell_coords[&impl_source_id]},
+            ImplGraphNode::ModulePort(_) => RoutingGraphNode::IoBlock {coords: module_port_coords[&impl_source_id]},
+        };
+
+        let routing_sink = match (impl_sink, impl_edge.weight) {
+            (ImplGraphNode::LogicCell(_), ImplGraphEdge::LogicCellInput(input)) => RoutingGraphNode::LogicCellInput {coords: logic_cell_coords[&impl_sink_id], input},
+            (ImplGraphNode::ModulePort(_), ImplGraphEdge::ModulePortInput) => RoutingGraphNode::IoBlock {coords: module_port_coords[&impl_sink_id]},
+            (ImplGraphNode::LogicCell(_), ImplGraphEdge::LogicCellClock) => {
+                // Ignore clock signal inputs for the purposes of routing.
+                continue;
+            },
+            (sink, edge) => panic!("Illegal connection to {:?} via edge {:?}", sink, edge),
+        };
+
+        let nets = nets.entry(routing_source).or_insert_with(Vec::new);
+        nets.push(routing_sink);
+    }
 
     let graph = topology.build_graph();
-    // println!("{:?}", graph);
-
-    // Create neat visualization with "sfdp -x -Goverlap=scale -Tpdf /tmp/test.dot > test.pdf"
-    // TODO: Use Display instead of Debug for nicer output labels
-    use std::io::Write;
-    use petgraph::dot::{Dot, Config};
-    let mut f = std::fs::File::create("/tmp/test.dot").unwrap();
-    let output = format!("{:?}", Dot::with_config(&graph, &[Config::EdgeNoLabel]));
-    f.write_all(&output.as_bytes()).unwrap();
 
 
     let config = RoutingConfiguration {};
-
-
-
     Ok(config)
 }
