@@ -1,7 +1,7 @@
 
 # myfpga
 
-A work-in-progress DIY FPGA Architecture
+A work-in-progress FPGA architecture
 
 The FPGA will be implemented in SystemVerilog and simulated using a Verilator
 model linked against a C++ launcher.
@@ -15,32 +15,36 @@ which the myfpga simulation C++ launcher will load into the simulated FPGA.
 ## Architecture
 
 The elements of the myfpga architecture are laid out in a grid.
-The direction towards the "top" of the device is called "north",
-the direction towards the "bottom" "south".
-Similarly the directions towards the "left" and "right"
+The direction towards the top of the device is called "north",
+the direction towards the bottom "south".
+Similarly the directions towards the left and right
 are called "west" and "east" respectively.
 
 ![Routing Architecture](diagrams/routing.png "Routing Architecture")
 
 ### Logic Cells
 
-Logic cells implement a logic function using a 4-input lookup table (LUT).
-The output can optionally be buffered through a flip flop (FF) with
-configurable trigger clocker polarity (rising or falling edge).
+Logic cells implement any arbitrary logic function using a 4-input lookup table (LUT).
+Wider logic functions are implemented by cascading logic cells.
+The output is optionally buffered through a flip flop (FF) with
+configurable clock polarity (rising or falling edge triggered).
 
 ![Logic Cell Architecture](diagrams/logic_cell.png "Logic Cell Architecture")
 
+Currently all flip flops in the design must reside in the same clock domain.
+The source of this clock signal must come from a single I/O block attached
+to the global clock tree.
+
 ### I/O Blocks
 
-I/O blocks send or receive signals from outside the device for
-transmission to and from logic cells.
+I/O blocks receive signals from outside the device for transmission to logic cell inputs,
+or send them outside of the device via a connected logic cell output.
 
 ### Switch Blocks
 
-Switch blocks receive signals from the adjacent switch blocks to the
-north, south, west, and east (or from an adjacent I/O block if at the edge
-of the device).
-These are composed of four channels, each carrying a separately routed signal.
+Switch blocks receive data from the adjacent switch blocks to the north, south,
+west, and east (or from an adjacent I/O block if at the edge of the device).
+These are composed of four channels each, each carrying a separately routed signal.
 Additionally, switch blocks receive a signal from the output of the logic
 cells at each corner.
 
@@ -48,7 +52,7 @@ cells at each corner.
 
 ![Switch Block Internal Routing](diagrams/switch_block.png "Switch Block Internal Routing")
 
-Switch blocks output a signal on all four channels on each side by choosing
+Switch blocks output data on all four channels on each side by choosing
 one of the inputs to route to each channel.
 Any input from any channel of any side or corner can be routed to any output.
 The only restriction is that inputs from a given side cannot be routed
@@ -62,15 +66,15 @@ as well as the corresponding signal for that channel from each of the four sides
 
 ![Logic Cell Input Routing](diagrams/logic_cell_input_routing.png "Logic Cell Input Routing")
 
-The signals between switch blocks are tapped by adjacent logic cells.
+The channels between switch blocks are tapped by adjacent logic cells.
 A given logic cell can use the following signals as any of its four inputs:
 
-* Northbound signals output by the southwest switch block
-* Westbound signals output by the northeast switch block
-* Southbound or eastbound signals output by the northwest switch block
+* Northbound signals output by its southwest switch block
+* Westbound signals output by its northeast switch block
+* Southbound or eastbound signals output by its northwest switch block
 
-Note that all channels of the above signals are routable to any input,
-but have been omitted from the diagram to simplify it.
+Note that all channels of the above data are routable to any input,
+but have been omitted from the diagram for simplicity.
 In reality the four-input multiplexers pictured are 16-input multiplexers.
 
 Also note that the southeast switch block cannot be used for input routing at all,
@@ -86,13 +90,17 @@ The steps to implement a design on myfpga follow these steps:
 3. Convert discrete LUTs and FFs into combined logic cells where possible,
    creating passthrough LUTs and bypassing FFs where they cannot be combined
    into a single logic cell. This process of converting discrete synthesis
-   elements into architectural elements is the "implementation" step.
+   elements into architectural elements is called the "implementation" step.
 4. Place and route the logic cells using a simulated annealing algorithm
    to find an optimal arrangement.
 5. Generate a bitstream which can be used to configure the device.
 
-A prototype Python toolchain has been completed, aside from the bitstream generation.
+A prototype Python toolchain has been completed, except for the bitstream generation.
 I am currently in the process of porting it to Rust for performance reasons.
+
+The bitstream format relies on the order of various shift registers within the
+device which will hold the configuration, and so I am waiting to implement that
+part of the toolchain until the device's configuration system is finished.
 
 ## Simulation
 
