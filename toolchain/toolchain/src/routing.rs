@@ -1,16 +1,16 @@
 
+use std::collections::HashMap;
+
+use rand::prelude::*;
 use itertools::iproduct;
 use petgraph::graphmap::DiGraphMap;
 
 use crate::synthesis::LookUpTableInput;
-use crate::implementation::{
-    ImplGraph,
-};
-
+use crate::implementation::{ImplGraph, ImplGraphNode, ImplGraphEdge};
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum CardinalDirection {
+pub enum CardinalDirection {
     North,
     South,
     West,
@@ -20,7 +20,7 @@ enum CardinalDirection {
 impl CardinalDirection {
     const VALUES: [Self; 4] = [Self::North, Self::South, Self::West, Self::East];
 
-    fn opposite(self) -> Self {
+    pub fn opposite(self) -> Self {
         match self {
             Self::North => Self::South,
             Self::South => Self::North,
@@ -29,7 +29,7 @@ impl CardinalDirection {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::North => "north",
             Self::South => "south",
@@ -41,7 +41,7 @@ impl CardinalDirection {
 
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-enum IntercardinalDirection {
+pub enum IntercardinalDirection {
     Northwest,
     Northeast,
     Southwest,
@@ -51,7 +51,7 @@ enum IntercardinalDirection {
 impl IntercardinalDirection {
     const VALUES: [Self; 4] = [Self::Northwest, Self::Northeast, Self::Southwest, Self::Southeast];
 
-    fn opposite(self) -> Self {
+    pub fn opposite(self) -> Self {
         match self {
             Self::Northwest => Self::Southeast,
             Self::Northeast => Self::Southwest,
@@ -62,11 +62,16 @@ impl IntercardinalDirection {
 }
 
 
-type RoutingGraph = DiGraphMap<RoutingGraphNode, RoutingGraphEdge>;
+use std::collections::HashSet;
+
+
+pub type RoutingGraph = DiGraphMap<RoutingGraphNode, RoutingGraphEdge>;
+pub type RoutingNetList = HashMap<RoutingGraphNode, HashSet<RoutingGraphNode>>;
+
 
 // Each switch block side has an input and output with multiple channels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum SwitchBlockChannel {
+pub enum SwitchBlockChannel {
     A,
     B,
     C,
@@ -76,21 +81,21 @@ enum SwitchBlockChannel {
 impl SwitchBlockChannel {
     const VALUES: [Self; 4] = [Self::A, Self::B, Self::C, Self::D];
 
-    // Use additional cost for other channels to encourage the algorithm
+    // Add additional cost for other channels to encourage the algorithm
     // to reuse a channel when it can.
     fn cost(self) -> i32 {
         match self {
             Self::A => 1,
-            Self::B => 2,
-            Self::C => 3,
-            Self::D => 4,
+            Self::B => 11,
+            Self::C => 21,
+            Self::D => 31,
         }
     }
 }
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum RoutingGraphNode {
+pub enum RoutingGraphNode {
     SwitchBlockInput(SwitchBlockPort),
     SwitchBlockOutput(SwitchBlockPort),
     SwitchBlockCorner(SwitchBlockCorner),
@@ -118,21 +123,21 @@ impl RoutingGraphNode {
 
 
 // Cost of using the resource
-type RoutingGraphEdge = i32;
+pub type RoutingGraphEdge = i32;
 
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-struct SwitchBlockPort {
-    coords: SwitchBlockCoordinates,
-    side: CardinalDirection,
-    channel: SwitchBlockChannel,
+pub struct SwitchBlockPort {
+    pub coords: SwitchBlockCoordinates,
+    pub side: CardinalDirection,
+    pub channel: SwitchBlockChannel,
 }
 
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-struct SwitchBlockCorner {
-    coords: SwitchBlockCoordinates,
-    direction: IntercardinalDirection,
+pub struct SwitchBlockCorner {
+    pub coords: SwitchBlockCoordinates,
+    pub direction: IntercardinalDirection,
 }
 
 
@@ -359,39 +364,39 @@ impl DeviceTopology {
 
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-struct LogicCellCoordinates {
-    x: usize,
-    y: usize,
+pub struct LogicCellCoordinates {
+    pub x: usize,
+    pub y: usize,
 }
 
 impl LogicCellCoordinates {
-    fn name(self) -> String {
+    pub fn name(self) -> String {
         format!("$cell[{},{}]", self.x, self.y)
     }
 }
 
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-struct SwitchBlockCoordinates {
-    x: usize,
-    y: usize,
+pub struct SwitchBlockCoordinates {
+    pub x: usize,
+    pub y: usize,
 }
 
 impl SwitchBlockCoordinates {
-    fn name(self) -> String {
+    pub fn name(self) -> String {
         format!("$junction[{},{}]", self.x, self.y)
     }
 }
 
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
-struct IoBlockCoordinates {
-    direction: CardinalDirection,
-    position: usize,
+pub struct IoBlockCoordinates {
+    pub direction: CardinalDirection,
+    pub position: usize,
 }
 
 impl IoBlockCoordinates {
-    fn name(self) -> String {
+    pub fn name(self) -> String {
         format!("$io_{}[{}]", self.direction.name(), self.position)
     }
 }
@@ -409,14 +414,7 @@ pub struct RoutingConfiguration {
 }
 
 
-use rand::prelude::*;
-
-use std::collections::HashMap;
-
-use crate::implementation::{
-    ImplGraphNode, ImplGraphEdge,
-};
-
+// TODO: Extract parts of this function
 pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<RoutingConfiguration, RoutingError> {
     let mut rng = rand::thread_rng();
 
@@ -426,7 +424,7 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
     }).collect();
     let logic_cells_required = logic_cell_indices.len();
     let mut logic_cell_coords = topology.iter_logic_cell_coords().choose_multiple(&mut rng, logic_cell_indices.len());
-    logic_cell_coords.shuffle(&mut rng);
+    logic_cell_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
     let logic_cell_coords: HashMap<_, _> = logic_cell_indices.into_iter().zip(logic_cell_coords).collect();
 
     if logic_cell_coords.len() < logic_cells_required {
@@ -443,7 +441,7 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
     }).collect();
     let io_blocks_required = module_port_indices.len();
     let mut io_block_coords = topology.iter_io_block_coords().choose_multiple(&mut rng, module_port_indices.len());
-    io_block_coords.shuffle(&mut rng);
+    io_block_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
     let module_port_coords: HashMap<_, _> = module_port_indices.into_iter().zip(io_block_coords).collect();
 
     if module_port_coords.len() < io_blocks_required {
@@ -455,7 +453,7 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
         });
     }
 
-    let mut nets = HashMap::new();
+    let mut nets = RoutingNetList::new();
     for impl_edge in impl_graph.raw_edges() {
         let impl_source_id = impl_edge.source();
         let impl_source = &impl_graph[impl_source_id];
@@ -477,12 +475,12 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
             (sink, edge) => panic!("Illegal connection to {:?} via edge {:?}", sink, edge),
         };
 
-        let nets = nets.entry(routing_source).or_insert_with(Vec::new);
-        nets.push(routing_sink);
+        let nets = nets.entry(routing_source).or_insert_with(HashSet::new);
+        nets.insert(routing_sink);
     }
 
     let graph = topology.build_graph();
-
+    let routed_nets = crate::pathfinder::pathfinder(&graph, &nets);
 
     let config = RoutingConfiguration {};
     Ok(config)

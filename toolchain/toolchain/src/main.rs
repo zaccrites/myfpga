@@ -3,6 +3,7 @@ mod implementation;
 mod synthesis;
 
 mod routing;
+mod pathfinder;
 // mod anneal;
 
 
@@ -81,7 +82,7 @@ fn run() -> Result<(), ToolchainError> {
 
     // println!("{:?}", impl_graph);
 
-    let topology = routing::DeviceTopology {width: 3, height: 3};
+    let topology = routing::DeviceTopology {width: 2, height: 2};
     let routing_config = routing::route_design(impl_graph, topology)?;
 
     println!("{:?}", routing_config);
