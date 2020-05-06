@@ -204,5 +204,26 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList) -> RoutingNetList
         all_nets.insert(source);
         results.insert(source, all_nets);
     }
+
+    verify_netlist(&graph, &results);
     results
+}
+
+
+fn verify_netlist(_graph: &RoutingGraph, netlist: &RoutingNetList) {
+
+    // FUTURE: Write real unit test cases. For now these assertions should work,
+    // along with some integration test cases.
+
+    // 1. For each set of nets in the net list,
+    // all of the nets are connected via the graph
+    //
+    // TODO
+
+    // 2. Each set of nets in the net list are disjoint
+    // (i.e., no routing resources are shared between nets for a given source)
+    assert!(netlist.values().enumerate()
+        .zip(netlist.values().enumerate())
+        .filter_map(|((i0, v0), (i1, v1))| if i0 == i1 { None } else { Some((v0, v1)) })
+        .all(|(v0, v1)| v0.is_disjoint(v1)));
 }
