@@ -1,0 +1,6 @@
+
+read_verilog fibonacci.v
+hierarchy -check -top fibonacci
+synth -lut 4 -flatten
+write_json fibonacci.json
+show
