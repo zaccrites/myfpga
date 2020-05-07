@@ -480,7 +480,9 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
     }
 
     let graph = topology.build_graph();
-    let routed_nets = crate::pathfinder::pathfinder(&graph, &nets);
+    let (routing_score, routed_nets) = crate::pathfinder::pathfinder(&graph, &nets);
+
+    println!("Score = {:?}", routing_score);
 
     let config = RoutingConfiguration {};
     Ok(config)
