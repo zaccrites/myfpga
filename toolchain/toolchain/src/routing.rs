@@ -81,15 +81,8 @@ pub enum SwitchBlockChannel {
 impl SwitchBlockChannel {
     const VALUES: [Self; 4] = [Self::A, Self::B, Self::C, Self::D];
 
-    // Add additional cost for other channels to encourage the algorithm
-    // to reuse a channel when it can.
     fn cost(self) -> i32 {
-        match self {
-            Self::A => 1,
-            Self::B => 11,
-            Self::C => 21,
-            Self::D => 31,
-        }
+        1
     }
 }
 
@@ -360,6 +353,46 @@ impl DeviceTopology {
         north.chain(south).chain(west).chain(east)
     }
 
+    fn get_absolute_xy_coords(&self, node: RoutingGraphNode) -> (i32, i32) {
+        // TODO: Extract this for use in the iter_*_coords methods above?
+        match node {
+            RoutingGraphNode::IoBlock {coords} => {
+                let width = (self.width as i32) + 1;
+                let height = (self.height as i32) + 1;
+                let position = 2 * (coords.position as i32) + 1;
+                match coords.direction {
+                    CardinalDirection::North => (position, 0),
+                    CardinalDirection::South => (position, height),
+                    CardinalDirection::West => (0, position),
+                    CardinalDirection::East => (width, position),
+                }
+            },
+
+            RoutingGraphNode::SwitchBlockInput(SwitchBlockPort {coords, ..}) |
+            RoutingGraphNode::SwitchBlockOutput(SwitchBlockPort {coords, ..}) |
+            RoutingGraphNode::SwitchBlockCorner(SwitchBlockCorner {coords, ..}) => {
+                let x = 2 * (coords.x as i32) + 1;
+                let y = 2 * (coords.y as i32) + 1;
+                (x, y)
+            },
+
+            RoutingGraphNode::LogicCellInput {coords, ..} |
+            RoutingGraphNode::LogicCellOutput {coords} => {
+                let x = 2 * (coords.x as i32) + 2;
+                let y = 2 * (coords.y as i32) + 2;
+                (x, y)
+            },
+        }
+    }
+
+    pub fn estimate_distance(&self, a: RoutingGraphNode, b: RoutingGraphNode) -> i32 {
+        let (ax, ay) = self.get_absolute_xy_coords(a);
+        let (bx, by) = self.get_absolute_xy_coords(b);
+        let dx = (ax - bx).abs();
+        let dy = (ay - by).abs();
+        return (dx + dy) as i32
+    }
+
 }
 
 
@@ -418,13 +451,30 @@ pub struct RoutingConfiguration {
 pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<RoutingConfiguration, RoutingError> {
     let mut rng = rand::thread_rng();
 
+    // TODO: Arrange initial placement by putting connected logic cells near eachother
+    // and logic cells connected to IO blocks near those blocks. Annealing can then move
+    // the logic cells around locally after the initial placement.
+    //
+    // Find islands of "strongly" connected cells and group them, but space the
+    // islands out as much as possible to give them room to route around.
+    //
+    // See also "\OneDrive\Documents\FittingAlgorithms_and_SeedSweeps.pdf"
+
+    // Maybe make Pathfinder give up after N number of moves, returning a score indicating unroutability and by how much
+    // instead of a "routability score"?
+    // Maybe use an enum which sorts routable scores first by lowest average path length
+    // the unroutable scores by number of remaining shared resources when it gave up?
+
+    // TODO: Make temperature schedule configurable via command line. Quartus does this in settings.
+
     let logic_cell_indices: Vec<_> = impl_graph.node_indices().filter_map(|node| match &impl_graph[node] {
         ImplGraphNode::LogicCell(_) => Some(node),
         _ => None,
     }).collect();
     let logic_cells_required = logic_cell_indices.len();
-    let mut logic_cell_coords = topology.iter_logic_cell_coords().choose_multiple(&mut rng, logic_cell_indices.len());
-    logic_cell_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
+    let logic_cell_coords =  topology.iter_logic_cell_coords().step_by(4);  // .take(logic_cell_indices.len());
+    // let mut logic_cell_coords = topology.iter_logic_cell_coords().choose_multiple(&mut rng, logic_cell_indices.len());
+    // logic_cell_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
     let logic_cell_coords: HashMap<_, _> = logic_cell_indices.into_iter().zip(logic_cell_coords).collect();
 
     if logic_cell_coords.len() < logic_cells_required {
@@ -440,8 +490,9 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
         _ => None,
     }).collect();
     let io_blocks_required = module_port_indices.len();
-    let mut io_block_coords = topology.iter_io_block_coords().choose_multiple(&mut rng, module_port_indices.len());
-    io_block_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
+    let io_block_coords = topology.iter_io_block_coords().step_by(4);  // .take(module_port_indices.len());
+    // let mut io_block_coords = topology.iter_io_block_coords().choose_multiple(&mut rng, module_port_indices.len());
+    // io_block_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
     let module_port_coords: HashMap<_, _> = module_port_indices.into_iter().zip(io_block_coords).collect();
 
     if module_port_coords.len() < io_blocks_required {
@@ -480,7 +531,8 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
     }
 
     let graph = topology.build_graph();
-    let (routing_score, routed_nets) = crate::pathfinder::pathfinder(&graph, &nets);
+    println!("Starting pathfinder");
+    let (routing_score, routed_nets) = crate::pathfinder::pathfinder(&graph, &nets, &topology);
 
     println!("Score = {:?}", routing_score);
 

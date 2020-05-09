@@ -5,6 +5,7 @@ mod synthesis;
 mod routing;
 mod pathfinder;
 // mod anneal;
+mod bitstream;
 
 
 #[derive(Debug)]
@@ -12,6 +13,7 @@ enum ToolchainError {
     SynthesisError(String),
     ImplementationError(String),
     RoutingError(String),
+    BitstreamError(String),
 }
 
 impl ToolchainError {
@@ -20,6 +22,7 @@ impl ToolchainError {
             Self::SynthesisError(msg) => msg,
             Self::ImplementationError(msg) => msg,
             Self::RoutingError(msg) => msg,
+            Self::BitstreamError(msg) => msg,
         }
     }
 
@@ -28,6 +31,7 @@ impl ToolchainError {
             Self::SynthesisError(_) => "Synthesis",
             Self::ImplementationError(_) => "Implementation",
             Self::RoutingError(_) => "Routing",
+            Self::BitstreamError(_) => "Bitstream generation",
         }
     }
 }
@@ -69,23 +73,39 @@ impl From<routing::RoutingError> for ToolchainError {
     }
 }
 
+impl From<bitstream::BitstreamError> for ToolchainError {
+    fn from(err: bitstream::BitstreamError) -> Self {
+        ToolchainError::BitstreamError(format!("TODO: {:?}", err))
+    }
+}
+
 
 fn run() -> Result<(), ToolchainError> {
     // TODO: Pass std::io::Read to serde_json decoder directly
-    let design_json_text = std::fs::read_to_string("/home/zac/Code/myfpga/designs/my_design/my_design.json").unwrap();
+    // let design_json_text = std::fs::read_to_string("/home/zac/Code/myfpga/designs/my_design/my_design.json").unwrap();
+    let design_json_text = std::fs::read_to_string("/home/zac/Code/myfpga/designs/fibonacci/fibonacci.json").unwrap();
     let design_json = serde_json::from_str(&design_json_text).unwrap();
+
+    println!("Starting design read");
     let design = synthesis::Design::read(design_json)?;
 
     println!("Design: \"{}\"", design.name);
     let design_graph = design.into_graph()?;
+
+    println!("Starting Implementation");
     let impl_graph = implementation::implement_design(design_graph)?;
 
     // println!("{:?}", impl_graph);
 
-    let topology = routing::DeviceTopology {width: 2, height: 2};
+    // let topology = routing::DeviceTopology {width: 2, height: 2};
+    println!("Starting Routing");
+    let topology = routing::DeviceTopology {width: 20, height: 20};
     let routing_config = routing::route_design(impl_graph, topology)?;
 
     println!("{:?}", routing_config);
+
+    println!("Starting Bitstream generation");
+    let bitstream_config = bitstream::generate_bitstream(&routing_config)?;
 
     Ok(())
 }

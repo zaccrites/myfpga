@@ -10,6 +10,7 @@ use crate::routing::{
     RoutingGraph,
     RoutingGraphNode,
     RoutingNetList,
+    DeviceTopology,
 };
 
 
@@ -39,6 +40,7 @@ impl Ord for PriorityQueueEntry {
 struct PriorityQueue {
     heap: BinaryHeap<Reverse<PriorityQueueEntry>>,
     counter: usize,
+    items: HashSet<RoutingGraphNode>,
 }
 
 impl PriorityQueue {
@@ -46,6 +48,7 @@ impl PriorityQueue {
         PriorityQueue {
             heap: BinaryHeap::new(),
             counter: 0,
+            items: HashSet::new(),
         }
     }
 
@@ -53,10 +56,12 @@ impl PriorityQueue {
         let entry = PriorityQueueEntry(priority, self.counter, node);
         self.heap.push(Reverse(entry));
         self.counter += 1;
+        self.items.insert(node);
     }
 
     pub fn pop(&mut self) -> Option<RoutingGraphNode> {
         if let Some(Reverse(entry)) = self.heap.pop() {
+            self.items.remove(&entry.2);
             Some(entry.2)
         }
         else {
@@ -66,7 +71,8 @@ impl PriorityQueue {
 
     pub fn contains(&self, node: RoutingGraphNode) -> bool {
         // TODO: Use a HashSet to keep the current items instead?
-        self.heap.iter().any(|Reverse(entry)| entry.2 == node)
+        // self.heap.iter().any(|Reverse(entry)| entry.2 == node)
+        self.items.contains(&node)
     }
 
 }
@@ -85,16 +91,6 @@ impl FromIterator<RoutingGraphNode> for PriorityQueue {
     }
 }
 
-impl std::iter::Extend<(RoutingGraphNode, i32)> for PriorityQueue {
-    fn extend<T>(&mut self, iter: T)
-        where T: std::iter::IntoIterator<Item=(RoutingGraphNode, i32)>
-    {
-        for (item, priority) in iter {
-            self.push(item, priority);
-        }
-    }
-}
-
 
 type NetListScore = f64;
 
@@ -104,7 +100,14 @@ type NetListScore = f64;
 /// that source node.
 /// The returned netlist will find the nodes in the graph which must be
 /// connected in order to link all of the sinks to the source.
-pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList) -> (NetListScore, RoutingNetList) {
+pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &DeviceTopology) -> (NetListScore, RoutingNetList) {
+
+    // Another option: transform routing graph into a placement graph which
+    // does not use hashable nodes. Go back to using the plain indexes which
+    // don't need to be hashed (or can be hashed more easily as plain integers).
+    // Since the hashing takes up so much tiem (~30%) this could be a big performance
+    // improvement.
+
     // TODO: May not have to initialize the hash maps if I use the entry API
     // to fill in the default values.
     let historical_use_cost: RefCell<HashMap<RoutingGraphNode, i32>> = RefCell::new(graph.nodes().map(|node| (node, 0)).collect());
@@ -125,6 +128,10 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList) -> (NetListScore,
 
         // FUTURE: Improve performance by only re-routing signals which
         // have shared resources.
+
+        // TODO: Verify that this implementation is correct.
+        // Why does the number of shared resources increase? Shouldn't it decrease over time,
+        // maybe reaching some minimal number if the design is not routable?
 
         for (source, sinks) in nets {
             // We begin by looking at the source node.
@@ -153,7 +160,11 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList) -> (NetListScore,
                             *source,
                             |end| end == *sink,
                             |edge| cost_function(edge.target()) + *edge.weight(),
-                            |_| 0,  // FUTURE: Give an estimate cost to help guide the path finding algorithm
+
+                            // |_| 0,  // FUTURE: Give an estimate cost to help guide the path finding algorithm
+
+                            |node| topology.estimate_distance(node, *sink),
+
                         ).expect("Could not find path!");  // TODO: Return a RoutingError in this case
 
                         // Don't include the source or sink in the added path nodes
@@ -192,6 +203,19 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList) -> (NetListScore,
         //  present_use_cost > 2 : shared by multiple nets
         shared_resources_exist = present_use_cost.borrow().values().any(|value| *value > 2);
 
+        // TODO: Check that the number is decreasing, or it will sit and spin here forever
+        // never finding a solution if the routing is too tight.
+        println!("Shared resources: {}", present_use_cost.borrow().values().filter_map(|x| match x {
+            1 => None,
+            _ => Some(x - 2),  // amount of overuse (0 means that it's used by one net only)
+        }).sum::<i32>());
+
+        // ALso instead of a completely random arrangement, I should try placing initial logic
+        // cells randomly and then put their neighbors nearby. When doing random replacements,
+        // favor replacements made with nearby logic cell coordinates. Perhaps this can be done
+        // using a Gaussian curve of some kind for selecting a distance at which to swap coordinates
+        // during annealing.
+
         // Increase the historical use cost for all used nodes by the amount used.
         for (k, v) in present_use_cost.borrow().iter() {
             historical_use_cost.borrow_mut().entry(*k).and_modify(|value| *value += v);
@@ -208,6 +232,7 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList) -> (NetListScore,
         results.insert(source, all_nets);
     }
 
+    println!("Start scoring");
     let score = score_netlist(&graph, &results);
     (score, results)
 }
