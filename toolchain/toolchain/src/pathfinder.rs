@@ -5,6 +5,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::{HashMap, HashSet, BinaryHeap};
 
 use petgraph::visit::EdgeRef;
+use petgraph::graph::NodeIndex;
 
 use crate::routing::{
     RoutingGraph,
@@ -15,7 +16,7 @@ use crate::routing::{
 
 
 #[derive(Debug, Eq)]
-struct PriorityQueueEntry(i32, usize, RoutingGraphNode);
+struct PriorityQueueEntry(i32, usize, NodeIndex);
 
 impl PartialEq for PriorityQueueEntry {
     fn eq(&self, other: &Self) -> bool {
@@ -40,7 +41,7 @@ impl Ord for PriorityQueueEntry {
 struct PriorityQueue {
     heap: BinaryHeap<Reverse<PriorityQueueEntry>>,
     counter: usize,
-    items: HashSet<RoutingGraphNode>,
+    items: HashSet<NodeIndex>,
 }
 
 impl PriorityQueue {
@@ -52,14 +53,14 @@ impl PriorityQueue {
         }
     }
 
-    pub fn push(&mut self, node: RoutingGraphNode, priority: i32) {
+    pub fn push(&mut self, node: NodeIndex, priority: i32) {
         let entry = PriorityQueueEntry(priority, self.counter, node);
         self.heap.push(Reverse(entry));
         self.counter += 1;
         self.items.insert(node);
     }
 
-    pub fn pop(&mut self) -> Option<RoutingGraphNode> {
+    pub fn pop(&mut self) -> Option<NodeIndex> {
         if let Some(Reverse(entry)) = self.heap.pop() {
             self.items.remove(&entry.2);
             Some(entry.2)
@@ -69,7 +70,7 @@ impl PriorityQueue {
         }
     }
 
-    pub fn contains(&self, node: RoutingGraphNode) -> bool {
+    pub fn contains(&self, node: NodeIndex) -> bool {
         // TODO: Use a HashSet to keep the current items instead?
         // self.heap.iter().any(|Reverse(entry)| entry.2 == node)
         self.items.contains(&node)
@@ -78,9 +79,9 @@ impl PriorityQueue {
 }
 
 
-impl FromIterator<RoutingGraphNode> for PriorityQueue {
+impl FromIterator<NodeIndex> for PriorityQueue {
     fn from_iter<I>(iter: I) -> Self
-        where I: IntoIterator<Item=RoutingGraphNode>
+        where I: IntoIterator<Item=NodeIndex>
     {
         let mut queue = PriorityQueue::new();
         for item in iter {
@@ -102,16 +103,10 @@ type NetListScore = f64;
 /// connected in order to link all of the sinks to the source.
 pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &DeviceTopology) -> (NetListScore, RoutingNetList) {
 
-    // Another option: transform routing graph into a placement graph which
-    // does not use hashable nodes. Go back to using the plain indexes which
-    // don't need to be hashed (or can be hashed more easily as plain integers).
-    // Since the hashing takes up so much tiem (~30%) this could be a big performance
-    // improvement.
-
     // TODO: May not have to initialize the hash maps if I use the entry API
     // to fill in the default values.
-    let historical_use_cost: RefCell<HashMap<RoutingGraphNode, i32>> = RefCell::new(graph.nodes().map(|node| (node, 0)).collect());
-    let present_use_cost: RefCell<HashMap<RoutingGraphNode, i32>> = RefCell::new(HashMap::new());
+    let historical_use_cost: RefCell<HashMap<_, _>> = RefCell::new(graph.node_indices().map(|node| (node, 0)).collect());
+    let present_use_cost: RefCell<HashMap<_, _>> = RefCell::new(HashMap::new());
 
     let cost_function = |node| {
         let base_cost = 1;
@@ -124,7 +119,7 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
 
     let mut shared_resources_exist = true;
     while shared_resources_exist {
-        present_use_cost.replace(graph.nodes().map(|node| (node, 1)).collect());
+        present_use_cost.replace(graph.node_indices().map(|node| (node, 1)).collect());
 
         // FUTURE: Improve performance by only re-routing signals which
         // have shared resources.
@@ -160,11 +155,7 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
                             *source,
                             |end| end == *sink,
                             |edge| cost_function(edge.target()) + *edge.weight(),
-
-                            // |_| 0,  // FUTURE: Give an estimate cost to help guide the path finding algorithm
-
-                            |node| topology.estimate_distance(node, *sink),
-
+                            |node| topology.estimate_distance(graph[node], graph[*sink]),
                         ).expect("Could not find path!");  // TODO: Return a RoutingError in this case
 
                         // Don't include the source or sink in the added path nodes
@@ -178,9 +169,15 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
                         // They are added to the priority queue so that the next
                         // node we look at is the lowest cost potential path
                         // to the sink.
-                        for (_, neighbor, edge) in graph.edges(node) {
+
+                        // FUTURE: Store costs on the nodes themselves to avoid having
+                        // to use a refcell-wrapped-hashmap.
+                        // This neighbor walker does not borrow from the graph,
+                        // so mutating weights is allowed.
+                        let mut edges = graph.neighbors(node).detach();
+                        while let Some((edge, neighbor)) = edges.next(&graph) {
                             if ! (queue.contains(neighbor) || seen_nodes.contains(&neighbor)) {
-                                let path_cost = *edge;
+                                let path_cost = graph[edge];
                                 let priority = cost_function(node) + path_cost;
                                 queue.push(neighbor, priority);
                             }
@@ -209,12 +206,6 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
             1 => None,
             _ => Some(x - 2),  // amount of overuse (0 means that it's used by one net only)
         }).sum::<i32>());
-
-        // ALso instead of a completely random arrangement, I should try placing initial logic
-        // cells randomly and then put their neighbors nearby. When doing random replacements,
-        // favor replacements made with nearby logic cell coordinates. Perhaps this can be done
-        // using a Gaussian curve of some kind for selecting a distance at which to swap coordinates
-        // during annealing.
 
         // Increase the historical use cost for all used nodes by the amount used.
         for (k, v) in present_use_cost.borrow().iter() {
@@ -251,19 +242,18 @@ fn score_netlist(graph: &RoutingGraph, netlist: &RoutingNetList) -> NetListScore
 
     let mut scores = Vec::new();
     for (source, nodes) in netlist.iter() {
-        // Create a subgraph containing only the nodes we're interested in
-        let edges_of_interest = graph.all_edges()
-            .filter(|(source, target, _)| nodes.contains(source) && nodes.contains(target));
-        let subgraph = RoutingGraph::from_edges(edges_of_interest);
-        let path_lengths = petgraph::algo::dijkstra(&subgraph, *source, None, |edge| *edge.weight());
+        // TODO: Construct subgraph of just the nodes were care about if this is slow.
+        let path_lengths: Vec<_> = petgraph::algo::dijkstra(&graph, *source, None, |edge| *edge.weight())
+            .iter().filter_map(|(k, &v)| if nodes.contains(k) { Some(v) } else { None }).collect();
 
         // FUTURE: Find the right scoring metric. For now, use the maximum path length.
-        let score = path_lengths.values().max().unwrap();
+        let score = path_lengths.iter().max().unwrap();
         scores.push(*score);
 
         // Verify that for each set of nets in the net list,
         // all of the nets are connected via the graph.
-        assert!(nodes.iter().all(|node| path_lengths.contains_key(node)));
+        // assert!(nodes.iter().all(|node| path_lengths.contains_key(node)));
+        assert!(path_lengths.len() == nodes.len());
     }
 
     let mean_net_score = (scores.iter().sum::<i32>() as f64) / (scores.len() as f64);

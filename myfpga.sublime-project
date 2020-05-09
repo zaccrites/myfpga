@@ -5,6 +5,9 @@
             "path": ".",
             "folder_exclude_patterns": [
                 "*.egg-info"
+            ],
+            "file_exclude_patterns": [
+                "callgrind.out.*"
             ]
         }
     ]

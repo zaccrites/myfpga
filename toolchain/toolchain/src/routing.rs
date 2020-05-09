@@ -1,9 +1,9 @@
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::prelude::*;
 use itertools::iproduct;
-use petgraph::graphmap::DiGraphMap;
+use petgraph::graph::{DiGraph, NodeIndex};
 
 use crate::synthesis::LookUpTableInput;
 use crate::implementation::{ImplGraph, ImplGraphNode, ImplGraphEdge};
@@ -62,11 +62,10 @@ impl IntercardinalDirection {
 }
 
 
-use std::collections::HashSet;
 
 
-pub type RoutingGraph = DiGraphMap<RoutingGraphNode, RoutingGraphEdge>;
-pub type RoutingNetList = HashMap<RoutingGraphNode, HashSet<RoutingGraphNode>>;
+pub type RoutingGraph = DiGraph<RoutingGraphNode, RoutingGraphEdge>;
+pub type RoutingNetList = HashMap<NodeIndex, HashSet<NodeIndex>>;
 
 
 // Each switch block side has an input and output with multiple channels.
@@ -142,8 +141,16 @@ pub struct DeviceTopology {
 
 impl DeviceTopology {
 
-    fn build_graph(&self) -> RoutingGraph {
+    fn build_graph(&self) -> (RoutingGraph, HashMap<RoutingGraphNode, NodeIndex>) {
         let mut graph = RoutingGraph::new();
+
+        // Map a real node object back to its graph node index
+        let mut node_index_map = HashMap::new();
+        let mut add_edge = |source, target, weight| {
+            let source = *node_index_map.entry(source).or_insert_with(|| graph.add_node(source));
+            let target = *node_index_map.entry(target).or_insert_with(|| graph.add_node(target));
+            graph.add_edge(source, target, weight);
+        };
 
         for switch_block_coords in self.iter_switch_block_coords() {
             // Internal to the switch block, all inputs are connected to
@@ -161,7 +168,7 @@ impl DeviceTopology {
                 // to an output via a mux.
                 let input = RoutingGraphNode::SwitchBlockInput(input_port);
                 let output = RoutingGraphNode::SwitchBlockOutput(output_port);
-                graph.add_edge(input, output, output_port.channel.cost());
+                add_edge(input, output, output_port.channel.cost());
             }
 
             let corners = IntercardinalDirection::VALUES.iter().copied()
@@ -170,7 +177,7 @@ impl DeviceTopology {
                 .map(|(side, channel)| SwitchBlockPort {coords: switch_block_coords, side, channel});
             for (corner, output_port) in iproduct!(corners, outputs) {
                 let output = RoutingGraphNode::SwitchBlockOutput(output_port);
-                graph.add_edge(corner, output, output_port.channel.cost());
+                add_edge(corner, output, output_port.channel.cost());
             }
 
             for (direction, other_switch_block_coords) in self.adjacent_switch_blocks(switch_block_coords) {
@@ -186,7 +193,7 @@ impl DeviceTopology {
                     // drive another's input.
                     let output = RoutingGraphNode::SwitchBlockOutput(output_port);
                     let input = RoutingGraphNode::SwitchBlockInput(input_port);
-                    graph.add_edge(output, input, output_port.channel.cost());
+                    add_edge(output, input, output_port.channel.cost());
                 }
             }
 
@@ -195,7 +202,7 @@ impl DeviceTopology {
                 // at its corners (not pictured in diagram below).
                 let corner = RoutingGraphNode::SwitchBlockCorner(SwitchBlockCorner {coords: switch_block_coords, direction});
                 let logic_cell_output = RoutingGraphNode::LogicCellOutput {coords: logic_cell_coords};
-                graph.add_edge(logic_cell_output, corner, 1);
+                add_edge(logic_cell_output, corner, 1);
 
                 // TODO: Can probably extract things like this to methods on the coords struct
                 let logic_cell_inputs = LookUpTableInput::VALUES.iter().copied()
@@ -226,11 +233,11 @@ impl DeviceTopology {
                         // TODO: DRY
                         IntercardinalDirection::Northeast => SwitchBlockChannel::VALUES.iter().copied()
                             .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::North, channel})
-                            .for_each(|output| {graph.add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost());}),
+                            .for_each(|output| { add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost()); }),
 
                         IntercardinalDirection::Southwest => SwitchBlockChannel::VALUES.iter().copied()
                             .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::West, channel})
-                            .for_each(|output| {graph.add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost());}),
+                            .for_each(|output| { add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost()); }),
 
                         IntercardinalDirection::Southeast =>
                             (
@@ -240,7 +247,7 @@ impl DeviceTopology {
                                 SwitchBlockChannel::VALUES.iter().copied()
                                     .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: CardinalDirection::East, channel})
                             )
-                            .for_each(|output| {graph.add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost());}),
+                            .for_each(|output| { add_edge(RoutingGraphNode::SwitchBlockOutput(output), logic_cell_input, output.channel.cost()); }),
 
                         IntercardinalDirection::Northwest => {
                             // Switch blocks cannot connect to the inputs
@@ -251,29 +258,34 @@ impl DeviceTopology {
             }
 
             for (direction, io_block_coords) in self.adjacent_io_blocks(switch_block_coords) {
+                let io_block = RoutingGraphNode::IoBlock {coords: io_block_coords};
+
                 let inputs = SwitchBlockChannel::VALUES.iter().copied()
                     .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel});
                 for input_port in inputs {
                     let input = RoutingGraphNode::SwitchBlockInput(input_port);
-                    graph.add_edge(RoutingGraphNode::IoBlock {coords: io_block_coords}, input, input_port.channel.cost());
+                    add_edge(io_block, input, input_port.channel.cost());
                 }
 
                 let outputs = SwitchBlockChannel::VALUES.iter().copied()
                     .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel});
                 for output_port in outputs {
                     let output = RoutingGraphNode::SwitchBlockOutput(output_port);
-                    graph.add_edge(output, RoutingGraphNode::IoBlock {coords: io_block_coords}, output_port.channel.cost());
+                    add_edge(output, io_block, output_port.channel.cost());
                 }
             }
         }
 
-        for (source, target, _edge) in graph.all_edges() {
+        for edge in graph.raw_edges() {
+            let source = &graph[edge.source()];
+            let target = &graph[edge.target()];
             assert!(
-                source.can_connect_to(target),
-                "Cannot connect {:?} to {:?}", source, target,
+                source.can_connect_to(*target),
+                "Cannot connect {:?} to {:?}", edge.weight, target,
             );
         }
-        graph
+
+        (graph, node_index_map)
     }
 
     // TODO: Implement these as custom iterators instead
@@ -504,6 +516,7 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
         });
     }
 
+    let (graph, node_index_map) = topology.build_graph();
     let mut nets = RoutingNetList::new();
     for impl_edge in impl_graph.raw_edges() {
         let impl_source_id = impl_edge.source();
@@ -511,12 +524,12 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
         let impl_sink_id = impl_edge.target();
         let impl_sink = &impl_graph[impl_sink_id];
 
-        let routing_source = match impl_source {
+        let routing_source = node_index_map[&match impl_source {
             ImplGraphNode::LogicCell(_) => RoutingGraphNode::LogicCellOutput {coords: logic_cell_coords[&impl_source_id]},
             ImplGraphNode::ModulePort(_) => RoutingGraphNode::IoBlock {coords: module_port_coords[&impl_source_id]},
-        };
+        }];
 
-        let routing_sink = match (impl_sink, impl_edge.weight) {
+        let routing_sink = node_index_map[&match (impl_sink, impl_edge.weight) {
             (ImplGraphNode::LogicCell(_), ImplGraphEdge::LogicCellInput(input)) => RoutingGraphNode::LogicCellInput {coords: logic_cell_coords[&impl_sink_id], input},
             (ImplGraphNode::ModulePort(_), ImplGraphEdge::ModulePortInput) => RoutingGraphNode::IoBlock {coords: module_port_coords[&impl_sink_id]},
             (ImplGraphNode::LogicCell(_), ImplGraphEdge::LogicCellClock) => {
@@ -524,13 +537,12 @@ pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<R
                 continue;
             },
             (sink, edge) => panic!("Illegal connection to {:?} via edge {:?}", sink, edge),
-        };
+        }];
 
         let nets = nets.entry(routing_source).or_insert_with(HashSet::new);
         nets.insert(routing_sink);
     }
 
-    let graph = topology.build_graph();
     println!("Starting pathfinder");
     let (routing_score, routed_nets) = crate::pathfinder::pathfinder(&graph, &nets, &topology);
 
