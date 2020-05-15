@@ -93,7 +93,46 @@ impl FromIterator<NodeIndex> for PriorityQueue {
 }
 
 
-type NetListScore = f64;
+#[derive(Debug, Clone)]
+pub enum PathfinderResult {
+    Routed { score: f64, netlist: RoutingNetList },
+    NotRouted { congestion: i32 },
+}
+
+impl PartialOrd for PathfinderResult {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            // A successful solution is always better than a failed one
+            (&Self::Routed {..}, &Self::NotRouted {..}) => Some(Ordering::Greater),
+            (&Self::NotRouted {..}, &Self::Routed {..}) => Some(Ordering::Less),
+
+            // A successful route with a higher score is better.
+            (&Self::Routed { score: self_score, .. }, &Self::Routed { score: other_score, .. }) =>
+                self_score.partial_cmp(&other_score),
+
+            // An unsuccessful route with higher congestion is worse.
+            (&Self::NotRouted { congestion: self_congestion }, &Self::NotRouted { congestion: other_congestion }) =>
+                other_congestion.partial_cmp(&self_congestion),
+        }
+    }
+}
+
+impl PartialEq for PathfinderResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (&Self::Routed {..}, &Self::NotRouted {..}) => false,
+            (&Self::NotRouted {..}, &Self::Routed {..}) => false,
+
+            (&Self::Routed { score: self_score, .. }, &Self::Routed { score: other_score, .. }) =>
+                self_score.eq(&other_score),
+
+            (&Self::NotRouted { congestion: self_congestion }, &Self::NotRouted { congestion: other_congestion }) =>
+                self_congestion.eq(&other_congestion),
+        }
+    }
+}
+
+
 
 
 /// "nets" is the desired net connectivity. The keys are the net drivers
@@ -101,12 +140,12 @@ type NetListScore = f64;
 /// that source node.
 /// The returned netlist will find the nodes in the graph which must be
 /// connected in order to link all of the sinks to the source.
-pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &DeviceTopology) -> (NetListScore, RoutingNetList) {
+pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &DeviceTopology) -> PathfinderResult {
 
     // TODO: May not have to initialize the hash maps if I use the entry API
     // to fill in the default values.
     let historical_use_cost: RefCell<HashMap<_, _>> = RefCell::new(graph.node_indices().map(|node| (node, 0)).collect());
-    let present_use_cost: RefCell<HashMap<_, _>> = RefCell::new(HashMap::new());
+    let present_use_cost: RefCell<HashMap<_, _>> = RefCell::new(graph.node_indices().map(|node| (node, 1)).collect());
 
     let cost_function = |node| {
         let base_cost = 1;
@@ -117,9 +156,10 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
 
     // FUTURE: Try to clean this up, hopefully as more idiomatic Rust.
 
-    let mut shared_resources_exist = true;
-    while shared_resources_exist {
-        present_use_cost.replace(graph.node_indices().map(|node| (node, 1)).collect());
+    let mut shared_resource_count = i32::MAX;
+    while shared_resource_count > 0 {
+        // Reset present use cost for each iteration
+        present_use_cost.borrow_mut().values_mut().for_each(|v| *v = 1);
 
         // FUTURE: Improve performance by only re-routing signals which
         // have shared resources.
@@ -127,6 +167,9 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
         // TODO: Verify that this implementation is correct.
         // Why does the number of shared resources increase? Shouldn't it decrease over time,
         // maybe reaching some minimal number if the design is not routable?
+        //
+        // Maybe that's when you give up-- if the number of shared resources ever
+        // increases, then stop and score by what the cost was at that time.
 
         for (source, sinks) in nets {
             // We begin by looking at the source node.
@@ -198,14 +241,21 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
         //  present_use_cost = 1 : unused
         //  present_use_cost = 2 : exclusively used by one net
         //  present_use_cost > 2 : shared by multiple nets
-        shared_resources_exist = present_use_cost.borrow().values().any(|value| *value > 2);
-
-        // TODO: Check that the number is decreasing, or it will sit and spin here forever
-        // never finding a solution if the routing is too tight.
-        println!("Shared resources: {}", present_use_cost.borrow().values().filter_map(|x| match x {
+        // let new_shared_resource_count: i32 = present_use_cost.borrow().values().any(|value| *value > 2);
+        let new_shared_resource_count: i32 = present_use_cost.borrow().values().filter_map(|x| match x {
             1 => None,
             _ => Some(x - 2),  // amount of overuse (0 means that it's used by one net only)
-        }).sum::<i32>());
+        }).sum();
+
+        println!("Shared resources: {}", new_shared_resource_count);
+
+        if new_shared_resource_count > shared_resource_count {
+            // Give up, it's too congested. We'll try another configuration.
+            // The more resources are still shared when we give up, the worse the score.
+            println!("Giving up!");
+            return PathfinderResult::NotRouted { congestion: shared_resource_count };
+        }
+        shared_resource_count = new_shared_resource_count;
 
         // Increase the historical use cost for all used nodes by the amount used.
         for (k, v) in present_use_cost.borrow().iter() {
@@ -225,11 +275,11 @@ pub fn pathfinder(graph: &RoutingGraph, nets: &RoutingNetList, topology: &Device
 
     println!("Start scoring");
     let score = score_netlist(&graph, &results);
-    (score, results)
+    PathfinderResult::Routed { score, netlist: results }
 }
 
 
-fn score_netlist(graph: &RoutingGraph, netlist: &RoutingNetList) -> NetListScore {
+fn score_netlist(graph: &RoutingGraph, netlist: &RoutingNetList) -> f64 {
     // Along with scoring the netlist, this function also verifies
     // that the netlist has the required connectivity.
 

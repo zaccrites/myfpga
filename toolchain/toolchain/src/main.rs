@@ -1,37 +1,34 @@
 
-mod implementation;
 mod synthesis;
-
+mod implementation;
 mod routing;
-mod pathfinder;
-// mod anneal;
 mod bitstream;
 
 
 #[derive(Debug)]
 enum ToolchainError {
-    SynthesisError(String),
-    ImplementationError(String),
-    RoutingError(String),
-    BitstreamError(String),
+    Synthesis(String),
+    Implementation(String),
+    Routing(String),
+    Bitstream(String),
 }
 
 impl ToolchainError {
     fn message(&self) -> &str {
         match self {
-            Self::SynthesisError(msg) => msg,
-            Self::ImplementationError(msg) => msg,
-            Self::RoutingError(msg) => msg,
-            Self::BitstreamError(msg) => msg,
+            Self::Synthesis(msg) => msg,
+            Self::Implementation(msg) => msg,
+            Self::Routing(msg) => msg,
+            Self::Bitstream(msg) => msg,
         }
     }
 
     fn phase(&self) -> &'static str {
         match self {
-            Self::SynthesisError(_) => "Synthesis",
-            Self::ImplementationError(_) => "Implementation",
-            Self::RoutingError(_) => "Routing",
-            Self::BitstreamError(_) => "Bitstream generation",
+            Self::Synthesis(_) => "Synthesis",
+            Self::Implementation(_) => "Implementation",
+            Self::Routing(_) => "Routing",
+            Self::Bitstream(_) => "Bitstream generation",
         }
     }
 }
@@ -43,7 +40,7 @@ impl From<synthesis::SynthesisError> for ToolchainError {
             ModulePortUndriven {port} =>
                 format!("Module port \"{}\" is undriven", port),
         };
-        ToolchainError::SynthesisError(message)
+        ToolchainError::Synthesis(message)
     }
 }
 
@@ -56,7 +53,7 @@ impl From<implementation::ImplError> for ToolchainError {
             MultipleClockDomains {ff, expected_clock_source, actual_clock_source} =>
                 format!("\"{}\" should be clocked by main clock source \"{}\", not by \"{}\"", ff, expected_clock_source, actual_clock_source),
         };
-        ToolchainError::ImplementationError(message)
+        ToolchainError::Implementation(message)
     }
 }
 
@@ -68,14 +65,15 @@ impl From<routing::RoutingError> for ToolchainError {
                 format!("Need {} logic cells, but there are only {} available", needed, available),
             NotEnoughIoBlocks {needed, available} =>
                 format!("Need {} I/O blocks, but there are only {} available", needed, available),
+            FailedToRoute => "Unable to route the design".to_string(),
         };
-        ToolchainError::RoutingError(message)
+        ToolchainError::Routing(message)
     }
 }
 
 impl From<bitstream::BitstreamError> for ToolchainError {
     fn from(err: bitstream::BitstreamError) -> Self {
-        ToolchainError::BitstreamError(format!("TODO: {:?}", err))
+        ToolchainError::Bitstream(format!("TODO: {:?}", err))
     }
 }
 
@@ -99,10 +97,10 @@ fn run() -> Result<(), ToolchainError> {
 
     // let topology = routing::DeviceTopology {width: 2, height: 2};
     println!("Starting Routing");
-    let topology = routing::DeviceTopology {width: 20, height: 20};
+    let topology = routing::DeviceTopology {width: 10, height: 10};
     let routing_config = routing::route_design(impl_graph, topology)?;
 
-    println!("{:?}", routing_config);
+    // println!("{:?}", routing_config);
 
     println!("Starting Bitstream generation");
     let bitstream_config = bitstream::generate_bitstream(&routing_config)?;

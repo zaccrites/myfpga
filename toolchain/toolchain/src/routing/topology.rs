@@ -1,12 +1,15 @@
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use rand::prelude::*;
 use itertools::iproduct;
 use petgraph::graph::{DiGraph, NodeIndex};
 
 use crate::synthesis::LookUpTableInput;
-use crate::implementation::{ImplGraph, ImplGraphNode, ImplGraphEdge};
+
+/// A graph connecting routing elements
+pub type RoutingGraph = DiGraph<RoutingGraphNode, RoutingGraphEdge>;
+/// Paired with a RoutingGraph. Links a node to its index in the graph.
+pub type NodeIndexMap = HashMap<RoutingGraphNode, NodeIndex>;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -60,12 +63,6 @@ impl IntercardinalDirection {
         }
     }
 }
-
-
-
-
-pub type RoutingGraph = DiGraph<RoutingGraphNode, RoutingGraphEdge>;
-pub type RoutingNetList = HashMap<NodeIndex, HashSet<NodeIndex>>;
 
 
 // Each switch block side has an input and output with multiple channels.
@@ -141,7 +138,7 @@ pub struct DeviceTopology {
 
 impl DeviceTopology {
 
-    fn build_graph(&self) -> (RoutingGraph, HashMap<RoutingGraphNode, NodeIndex>) {
+    pub fn build_graph(&self) -> (RoutingGraph, HashMap<RoutingGraphNode, NodeIndex>) {
         let mut graph = RoutingGraph::new();
 
         // Map a real node object back to its graph node index
@@ -185,9 +182,9 @@ impl DeviceTopology {
                 // will add its output back to this block once its turn in the
                 // outer loop comes up.
                 let outputs = SwitchBlockChannel::VALUES.iter().copied()
-                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel: channel});
+                    .map(|channel| SwitchBlockPort {coords: switch_block_coords, side: direction, channel});
                 let inputs = SwitchBlockChannel::VALUES.iter().copied()
-                    .map(|channel| SwitchBlockPort {coords: other_switch_block_coords, side: direction.opposite(), channel: channel});
+                    .map(|channel| SwitchBlockPort {coords: other_switch_block_coords, side: direction.opposite(), channel});
                 for (output_port, input_port) in outputs.zip(inputs) {
                     // External to the switch block, an output will always
                     // drive another's input.
@@ -349,15 +346,15 @@ impl DeviceTopology {
         results
     }
 
-    fn iter_switch_block_coords(&self) -> impl Iterator<Item=SwitchBlockCoordinates> {
+    pub fn iter_switch_block_coords(&self) -> impl Iterator<Item=SwitchBlockCoordinates> {
         iproduct!(0..self.width+1, 0..self.height+1).map(|(x, y)| SwitchBlockCoordinates {x, y})
     }
 
-    fn iter_logic_cell_coords(&self) -> impl Iterator<Item=LogicCellCoordinates> {
+    pub fn iter_logic_cell_coords(&self) -> impl Iterator<Item=LogicCellCoordinates> {
         iproduct!(0..self.width, 0..self.height).map(|(x, y)| LogicCellCoordinates {x, y})
     }
 
-    fn iter_io_block_coords(&self) -> impl Iterator<Item=IoBlockCoordinates> {
+    pub fn iter_io_block_coords(&self) -> impl Iterator<Item=IoBlockCoordinates> {
         let north = (0..self.width+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::North, position: i });
         let south = (0..self.width+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::South, position: i });
         let west = (0..self.height+1).map(|i| IoBlockCoordinates { direction: CardinalDirection::West, position: i });
@@ -444,110 +441,4 @@ impl IoBlockCoordinates {
     pub fn name(self) -> String {
         format!("$io_{}[{}]", self.direction.name(), self.position)
     }
-}
-
-
-#[derive(Debug)]
-pub enum RoutingError {
-    NotEnoughLogicCells {needed: usize, available: usize},
-    NotEnoughIoBlocks {needed: usize, available: usize},
-}
-
-
-#[derive(Debug)]
-pub struct RoutingConfiguration {
-}
-
-
-// TODO: Extract parts of this function
-pub fn route_design(impl_graph: ImplGraph, topology: DeviceTopology) -> Result<RoutingConfiguration, RoutingError> {
-    let mut rng = rand::thread_rng();
-
-    // TODO: Arrange initial placement by putting connected logic cells near eachother
-    // and logic cells connected to IO blocks near those blocks. Annealing can then move
-    // the logic cells around locally after the initial placement.
-    //
-    // Find islands of "strongly" connected cells and group them, but space the
-    // islands out as much as possible to give them room to route around.
-    //
-    // See also "\OneDrive\Documents\FittingAlgorithms_and_SeedSweeps.pdf"
-
-    // Maybe make Pathfinder give up after N number of moves, returning a score indicating unroutability and by how much
-    // instead of a "routability score"?
-    // Maybe use an enum which sorts routable scores first by lowest average path length
-    // the unroutable scores by number of remaining shared resources when it gave up?
-
-    // TODO: Make temperature schedule configurable via command line. Quartus does this in settings.
-
-    let logic_cell_indices: Vec<_> = impl_graph.node_indices().filter_map(|node| match &impl_graph[node] {
-        ImplGraphNode::LogicCell(_) => Some(node),
-        _ => None,
-    }).collect();
-    let logic_cells_required = logic_cell_indices.len();
-    let logic_cell_coords =  topology.iter_logic_cell_coords().step_by(4);  // .take(logic_cell_indices.len());
-    // let mut logic_cell_coords = topology.iter_logic_cell_coords().choose_multiple(&mut rng, logic_cell_indices.len());
-    // logic_cell_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
-    let logic_cell_coords: HashMap<_, _> = logic_cell_indices.into_iter().zip(logic_cell_coords).collect();
-
-    if logic_cell_coords.len() < logic_cells_required {
-        return Err(RoutingError::NotEnoughLogicCells {
-            needed: logic_cells_required,
-            available: logic_cell_coords.len(),
-        });
-    }
-
-    // FUTURE: Support I/O constraints
-    let module_port_indices: Vec<_> = impl_graph.node_indices().filter_map(|node| match &impl_graph[node] {
-        ImplGraphNode::ModulePort(_) => Some(node),
-        _ => None,
-    }).collect();
-    let io_blocks_required = module_port_indices.len();
-    let io_block_coords = topology.iter_io_block_coords().step_by(4);  // .take(module_port_indices.len());
-    // let mut io_block_coords = topology.iter_io_block_coords().choose_multiple(&mut rng, module_port_indices.len());
-    // io_block_coords.shuffle(&mut rng);  // TODO: For annealing this "choose then shuffle" strategy may not work. I'll need to randomly choose from a list of coordinates to swap from.
-    let module_port_coords: HashMap<_, _> = module_port_indices.into_iter().zip(io_block_coords).collect();
-
-    if module_port_coords.len() < io_blocks_required {
-        // FUTURE: Handle this "plus one for clock" and other clock-related
-        // handling better.
-        return Err(RoutingError::NotEnoughIoBlocks {
-            needed: io_blocks_required + 1,  // Plus one for the clock input
-            available: module_port_coords.len(),
-        });
-    }
-
-    let (graph, node_index_map) = topology.build_graph();
-    let mut nets = RoutingNetList::new();
-    for impl_edge in impl_graph.raw_edges() {
-        let impl_source_id = impl_edge.source();
-        let impl_source = &impl_graph[impl_source_id];
-        let impl_sink_id = impl_edge.target();
-        let impl_sink = &impl_graph[impl_sink_id];
-
-        let routing_source = node_index_map[&match impl_source {
-            ImplGraphNode::LogicCell(_) => RoutingGraphNode::LogicCellOutput {coords: logic_cell_coords[&impl_source_id]},
-            ImplGraphNode::ModulePort(_) => RoutingGraphNode::IoBlock {coords: module_port_coords[&impl_source_id]},
-        }];
-
-        let routing_sink = node_index_map[&match (impl_sink, impl_edge.weight) {
-            (ImplGraphNode::LogicCell(_), ImplGraphEdge::LogicCellInput(input)) => RoutingGraphNode::LogicCellInput {coords: logic_cell_coords[&impl_sink_id], input},
-            (ImplGraphNode::ModulePort(_), ImplGraphEdge::ModulePortInput) => RoutingGraphNode::IoBlock {coords: module_port_coords[&impl_sink_id]},
-            (ImplGraphNode::LogicCell(_), ImplGraphEdge::LogicCellClock) => {
-                // Ignore clock signal inputs for the purposes of routing.
-                continue;
-            },
-            (sink, edge) => panic!("Illegal connection to {:?} via edge {:?}", sink, edge),
-        }];
-
-        let nets = nets.entry(routing_source).or_insert_with(HashSet::new);
-        nets.insert(routing_sink);
-    }
-
-    println!("Starting pathfinder");
-    let (routing_score, routed_nets) = crate::pathfinder::pathfinder(&graph, &nets, &topology);
-
-    println!("Score = {:?}", routing_score);
-
-    let config = RoutingConfiguration {};
-    Ok(config)
 }

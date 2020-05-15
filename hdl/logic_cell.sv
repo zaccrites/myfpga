@@ -1,12 +1,11 @@
 
 module logic_cell(
     input logic i_ConfigClock,
-    input logic i_LogicClock,
-
     input logic i_ConfigActive,
     input logic i_ConfigShiftInput,
     output logic o_ConfigShiftOutput,
 
+    input logic i_LogicClock,
     input logic [3:0] i_LookupTableInputs,
     output logic o_Output
 );
@@ -19,9 +18,7 @@ logic r_InputClockPolarity;
 
 always_ff @ (posedge i_ConfigClock) begin
     r_LookupTableMask[0] <= i_ConfigShiftInput;
-    for (i = 1; i <= 15; i++) begin
-        r_LookupTableMask[i] <= r_LookupTableMask[i - 1];
-    end
+    for (i = 1; i <= 15; i++) r_LookupTableMask[i] <= r_LookupTableMask[i - 1];
     r_FlipFlopBypass <= r_LookupTableMask[15];
     r_InputClockPolarity <= r_FlipFlopBypass;
     o_ConfigShiftOutput <= r_InputClockPolarity;
